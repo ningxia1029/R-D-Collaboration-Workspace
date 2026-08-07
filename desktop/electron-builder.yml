@@ -4,18 +4,20 @@ productName: PLM-Workspace
 copyright: Copyright © 2026
 
 directories:
-  output: release
+  output: dist
+
+# asar 关闭：内置 Next server 需通过 ELECTRON_RUN_AS_NODE 以纯 Node 运行，
+# 而 Node 无法读取 asar 虚拟文件系统；便携工具无需代码混淆保护，直接放磁盘最可靠。
+asar: false
 
 files:
   - desktop/main.js
   - desktop/preload.js
   - desktop/updater.js
+  - desktop/icon.ico
   - builtin-env.json
   - package.json
   - .next/standalone/**/*
-
-asarUnpack:
-  - "**/*.node"
 
 win:
   target:

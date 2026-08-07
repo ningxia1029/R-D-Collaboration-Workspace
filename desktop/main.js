@@ -1,9 +1,11 @@
 // PLM 研发协同平台 —— Electron 主进程
 // 职责：启动内置 Next.js standalone server → 打开桌面窗口 → 托盘常驻 → 退出清理
-// 更新：阶段3 接入（checkForUpdates 占位）
 "use strict";
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell } = require("electron");
+// 防御：若环境残留 ELECTRON_RUN_AS_NODE，本进程会退化成纯 Node，导致 require('electron') 失效
+delete process.env.ELECTRON_RUN_AS_NODE;
+
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -22,12 +24,15 @@ function loadConfig() {
     updateFeed: "", // 阶段3：GitHub Releases 地址
   };
   // 1) 构建时内置配置（随 exe 分发，含默认云端连接串）
-  try {
-    const builtin = JSON.parse(
-      fs.readFileSync(path.join(app.getAppPath(), "builtin-env.json"), "utf8")
-    );
-    Object.assign(cfg, builtin);
-  } catch { /* 开发模式无内置配置 */ }
+  for (const base of [app.getAppPath(), path.join(app.getAppPath(), "..")]) {
+    try {
+      const builtin = JSON.parse(
+        fs.readFileSync(path.join(base, "builtin-env.json"), "utf8")
+      );
+      Object.assign(cfg, builtin);
+      break;
+    } catch { /* 继续尝试下一候选 */ }
+  }
   // 2) 用户配置覆盖（%APPDATA%/plm-workspace/config.json）
   try {
     const userCfg = JSON.parse(
@@ -52,8 +57,9 @@ function findFreePort(start) {
 
 function getServerDir() {
   const candidates = [
-    path.join(app.getAppPath(), ".next", "standalone"), // 开发模式
-    path.join(process.resourcesPath, "app.asar", ".next", "standalone"), // 打包后
+    path.join(app.getAppPath(), ".next", "standalone"), // 打包后（resources/app）
+    path.join(app.getAppPath(), "..", ".next", "standalone"), // 开发模式（项目根）
+    path.join(process.resourcesPath, "app.asar.unpacked", ".next", "standalone"), // 打包后（asar 外，兼容）
     path.join(process.resourcesPath, "app", ".next", "standalone"),
   ];
   return candidates.find((d) => fs.existsSync(path.join(d, "server.js")));
@@ -84,8 +90,14 @@ async function startServer(cfg) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  proc.stdout.on("data", () => { /* server 日志，可接入调试文件 */ });
-  proc.stderr.on("data", () => { /* ignore */ });
+  // server 日志落盘（便于诊断）
+  const logPath = path.join(app.getPath("userData"), "server.log");
+  try {
+    const logStream = fs.createWriteStream(logPath, { flags: "a" });
+  proc.stdout.pipe(logStream);
+  proc.stderr.pipe(logStream);
+  } catch { /* 日志不可写则忽略 */ }
+  proc.on("error", (e) => console.error("[plm-main] server spawn error:", e.message));
   proc.on("exit", (code) => {
     if (!app.isQuitting) {
       console.error("内置服务意外退出:", code);
@@ -173,6 +185,11 @@ ipcMain.handle("app:get-info", () => ({
 }));
 
 // ============ 生命周期 ============
+// 软件渲染：兼容远程桌面/虚拟机/无独显环境（无 GPU 时避免 FATAL 退出）
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+app.commandLine.appendSwitch("disable-software-rasterizer");
 app.whenReady().then(async () => {
   const cfg = loadConfig();
   const started = await startServer(cfg);

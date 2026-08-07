@@ -20,21 +20,29 @@
 ## 技术栈
 
 - Next.js 14 (App Router) + React 18 + TypeScript + Ant Design 5
-- Prisma ORM + SQLite（零依赖本地运行；schema 方言中立，可平滑迁 PostgreSQL）
+- Prisma ORM + **PostgreSQL（Neon 云端，免费档）**；SQLite 仅用于开发备选
 - NextAuth v5（Credentials + JWT）、bcryptjs
+- Electron 31（桌面壳，`output: standalone` 内嵌 Next 服务）+ electron-builder（portable 便携版）
 - dnd-kit（看板拖拽）、frappe-gantt（甘特）、mermaid（流程图/状态机）、@uiw/react-md-editor + react-markdown、recharts、papaparse + SheetJS
 
-## 快速开始
+## 交付形态
 
+### A. 桌面便携版（推荐给终端用户）
+- 产物：`dist/PLM平台-<版本>-便携版.exe`（约 135MB，**免安装、双击即用**）
+- 数据：**云端共享**——所有客户端连接同一 Neon PostgreSQL（多人实时协作）
+- 更新：启动时自动检查 **GitHub Releases**，发现新版本提示下载并重启替换（国内自动走 ghproxy 镜像加速）
+- 构建：`npm run build:desktop`（含 next build + electron-builder 打包）
+
+### B. 浏览器版（开发/演示）
 ```bash
 npm install          # 安装依赖（自动 prisma generate）
-npm run setup        # 初始化数据库 + 写入演示数据（prisma db push && db seed）
+npm run setup        # 初始化云端数据库表结构 + 写入演示数据
 npm run dev          # 启动 http://localhost:3000
 ```
 
-> 数据库文件：`prisma/dev.db`（SQLite，路径见 `.env` 的 `DATABASE_URL`，已带 `connection_limit=1` 单连接参数）。重置数据：`npm run setup` 会清空并重新写入演示数据（含全文索引重建）。
+> 数据库：`.env` 的 `DATABASE_URL` 指向 Neon PostgreSQL（新加坡节点）。重置演示数据：`npm run setup`。
 
-> **排障**：若启动后写入报 `attempt to write a readonly database`（多见于沙箱/杀毒软件环境对 SQLite 文件的句柄占用），先停掉所有 node 进程，删除 `prisma/dev.db` 后重新执行 `npm run setup` 与 `npm run start`；若仍复现，将整个项目复制到其他磁盘再运行。在正常开发机上按上述命令即可直接使用。
+> **排障**：若写入报 `attempt to write a readonly database`（多见于沙箱/杀毒环境句柄占用），停掉所有 node 进程后重跑 `npm run setup` 与 `npm run dev`，或将项目复制到其他磁盘再运行。正常开发机按上述命令即可直接使用。
 
 ### 演示账号（密码均为 `Demo@123456`）
 
@@ -64,15 +72,20 @@ npm run dev          # 启动 http://localhost:3000
 
 ```
 prisma/            schema.prisma（24 表，原文档 6 表名原样保留）+ seed.ts
+desktop/           Electron 壳：main.js（启动内置 server/窗口/托盘/更新）、updater.js（GitHub 在线更新）、electron-builder.yml
+scripts/           build-desktop.mjs（一键打包便携版）、release.mjs（发布 GitHub Release）
 src/
   app/             页面（(auth)/login、(main)/dashboard|projects|plm|knowledge|resources|admin）+ api/ 路由
   components/      layout / tasks / bom / common 等 UI 组件
   lib/
-    constants.ts   全部枚举与权限矩阵（SQLite 无 enum，应用层约束）
+    constants.ts   全部枚举与权限矩阵（应用层约束）
     rbac.ts        requireAuth / requirePerm / 项目级数据权限
-    services/      业务规则层（齐套率、联动 Block、ECR/ECO 状态机、生命周期机、FTS 搜索…）
+    services/      业务规则层（齐套率、联动 Block、ECR/ECO 状态机、生命周期机、搜索…）
 ```
 
-## 迁移 PostgreSQL
+## 发版流程（在线更新）
 
-schema 未使用 SQLite 独有特性：修改 `prisma/schema.prisma` 的 `provider = "postgresql"` 与 `.env` 的 `DATABASE_URL`，重跑 `prisma migrate dev` 即可；全文检索需将 FTS5 虚表替换为 `tsvector`（`lib/services/searchService.ts` 单点封装，已内置 LIKE 降级）。
+1. 改 `package.json` version → `npm run build:desktop` 产出 `dist/PLM平台-<版本>-便携版.exe`
+2. `node scripts/release.mjs`（自动打 tag、推 GitHub、发布 Release，更新器即可检测到）
+
+> 搜索实现：云端 PostgreSQL 环境自动降级为 LIKE 模糊检索（中文子串匹配正常）；如启用原生全文可自行扩展 `lib/services/searchService.ts`。
