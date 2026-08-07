@@ -25,13 +25,15 @@ function loadConfig() {
   };
   // 1) 构建时内置配置（随 exe 分发，含默认云端连接串）
   for (const base of [app.getAppPath(), path.join(app.getAppPath(), "..")]) {
-    try {
-      const builtin = JSON.parse(
-        fs.readFileSync(path.join(base, "builtin-env.json"), "utf8")
-      );
-      Object.assign(cfg, builtin);
-      break;
-    } catch { /* 继续尝试下一候选 */ }
+    for (const sub of ["", "desktop"]) {
+      try {
+        const builtin = JSON.parse(
+          fs.readFileSync(path.join(base, sub, "builtin-env.json"), "utf8")
+        );
+        Object.assign(cfg, builtin);
+        break;
+      } catch { /* 继续尝试下一候选 */ }
+    }
   }
   // 2) 用户配置覆盖（%APPDATA%/plm-workspace/config.json）
   try {

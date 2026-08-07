@@ -22,7 +22,7 @@ function cp(src, dst) {
   console.log("cp", src, "->", dst);
 }
 
-// 1) .env → builtin-env.json（含云端连接串；.gitignore 排除）
+// 1) .env → desktop/builtin-env.json（含云端连接串；.gitignore 排除；放在 desktop/ 规避根目录只读问题）
 console.log("\n== 1/6 生成内置运行配置 ==");
 const envText = fs.readFileSync(path.join(root, ".env"), "utf8");
 const env = {};
@@ -30,12 +30,13 @@ for (const line of envText.split(/\r?\n/)) {
   const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*"?([^"\n]*)"?\s*$/);
   if (m) env[m[1]] = m[2].trim();
 }
+fs.rmSync(path.join(root, "desktop", "builtin-env.json"), { force: true }); // 覆盖写会被沙箱只读化，先删再写
 fs.writeFileSync(
-  path.join(root, "builtin-env.json"),
+  path.join(root, "desktop", "builtin-env.json"),
   JSON.stringify({ databaseUrl: env.DATABASE_URL || "", authSecret: env.AUTH_SECRET || "", updateFeed: env.UPDATE_FEED || "" }, null, 2),
   "utf8"
 );
-console.log("builtin-env.json 已生成");
+console.log("desktop/builtin-env.json 已生成");
 
 // 2) next build（standalone）
 console.log("\n== 2/6 Next.js 生产构建（standalone）==");
@@ -54,8 +55,8 @@ fs.mkdirSync(appDir, { recursive: true });
 cp(path.join(root, "node_modules", "electron", "dist"), unpackedDir);
 fs.renameSync(path.join(unpackedDir, "electron.exe"), path.join(unpackedDir, "PLM-Workspace.exe"));
 fs.mkdirSync(path.join(appDir, "desktop"), { recursive: true });
-for (const f of ["main.js", "preload.js", "updater.js", "icon.ico"]) cp(path.join(root, "desktop", f), path.join(appDir, "desktop", f));
-for (const f of ["builtin-env.json", "package.json"]) cp(path.join(root, f), path.join(appDir, f));
+for (const f of ["main.js", "preload.js", "updater.js", "icon.ico", "builtin-env.json"]) cp(path.join(root, "desktop", f), path.join(appDir, "desktop", f));
+for (const f of ["package.json"]) cp(path.join(root, f), path.join(appDir, f));
 cp(standalone, path.join(appDir, ".next", "standalone"));
 
 // 5) NSIS 便携单 exe

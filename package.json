@@ -1,6 +1,6 @@
 {
   "name": "plm-project-platform",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "公司级轻量级 PLM + 项目管理 + 工程知识库一体化平台",
   "main": "desktop/main.js",

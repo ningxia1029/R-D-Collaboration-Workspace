@@ -1,23 +1,30 @@
-// 在线更新服务（阶段3：GitHub Releases + portable 替换式更新器）
-// portable exe 无法原地替换自身：下载新 exe → 提示重启 → 用 updater.cmd 等待进程退出后替换并重启
+// 在线更新服务（GitHub Releases + portable 替换式更新器）
+// 检测：GET /releases/latest 跟随 302 重定向解析最新 tag（不依赖 GitHub API，规避匿名限流）
+// 更新：下载新 exe → 提示重启 → updater.cmd 等待本进程退出后覆盖自身并重启
 "use strict";
 
-const { app, dialog, Notification, shell } = require("electron");
+const { app, dialog } = require("electron");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const API = "https://api.github.com/repos/ningxia1029/R-D-Collaboration-Workspace/releases/latest";
+const REPO = "ningxia1029/R-D-Collaboration-Workspace";
+const LATEST_URL = `https://github.com/${REPO}/releases/latest`;
+const ASSET_PATTERN = (tag) => `PLM-Workspace-v${tag}-portable.exe`;
 
-function fetchJson(url, headers = {}) {
+// 跟随重定向解析最终 URL（用于取最新 tag）
+function resolveRedirect(url, redirects = 0) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { "User-Agent": "plm-workspace-updater", Accept: "application/vnd.github+json", ...headers } }, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
-      });
+    if (redirects > 5) return reject(new Error("重定向过多"));
+    const req = https.get(url, { headers: { "User-Agent": "plm-workspace-updater" }, timeout: 20000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const next = new URL(res.headers.location, url).toString();
+        res.resume();
+        return resolve(resolveRedirect(next, redirects + 1));
+      }
+      res.resume();
+      resolve({ finalUrl: url, statusCode: res.statusCode });
     });
     req.on("error", reject);
     req.setTimeout(20000, () => req.destroy(new Error("请求超时")));
@@ -58,12 +65,15 @@ module.exports = function registerUpdater({ app, mainWindow, cfg }) {
     if (checking) return { ok: false, message: "正在检查中" };
     checking = true;
     try {
-      const feedUrl = cfg.updateFeed || API;
-      const rel = await fetchJson(feedUrl);
-      const tag = (rel.tag_name || "").replace(/^v/, "");
+      const feedUrl = cfg.updateFeed || LATEST_URL;
+      const { finalUrl, statusCode } = await resolveRedirect(feedUrl);
+      if (statusCode >= 400) throw new Error("HTTP " + statusCode);
+      const m = finalUrl.match(/\/releases\/tag\/(v?[\d.]+)/);
+      if (!m) throw new Error("无法解析最新版本");
+      const tag = m[1].replace(/^v/, "");
       const current = app.getVersion();
       const need = compareVersions(tag, current) > 0;
-      state.latest = { tag, name: rel.name || tag, assets: rel.assets || [] };
+      state.latest = { tag, assetName: ASSET_PATTERN(tag) };
       if (!need) return { ok: true, needUpdate: false, message: `已是最新版本 v${current}` };
       return { ok: true, needUpdate: true, message: `发现新版本 v${tag}`, latest: state.latest };
     } catch (e) {
@@ -80,8 +90,7 @@ module.exports = function registerUpdater({ app, mainWindow, cfg }) {
       const r = await check();
       if (!r.needUpdate) { dialog.showMessageBox(parent, { type: "info", message: r.message }); return; }
     }
-    const asset = (state.latest.assets || []).find((a) => /\.exe$/i.test(a.name));
-    if (!asset) { dialog.showErrorBox(app.getName(), "发布包中未找到可执行文件"); return; }
+    const assetUrl = `https://github.com/${REPO}/releases/latest/download/${latest.assetName}`;
     if (state.downloading) return;
     state.downloading = true;
 
@@ -99,11 +108,11 @@ module.exports = function registerUpdater({ app, mainWindow, cfg }) {
       });
       if (r.response !== 0) { state.downloading = false; return; }
 
-      // 国内加速：优先 ghproxy 镜像
+      // 国内加速：直连优先 + ghproxy 镜像
       const mirrors = [
-        asset.browser_download_url,
-        asset.browser_download_url.replace("https://github.com", "https://ghproxy.net/https://github.com"),
-        asset.browser_download_url.replace("https://github.com", "https://mirror.ghproxy.com/https://github.com"),
+        assetUrl,
+        assetUrl.replace("https://github.com", "https://ghproxy.net/https://github.com"),
+        assetUrl.replace("https://github.com", "https://mirror.ghproxy.com/https://github.com"),
       ];
       let done = false;
       for (const url of mirrors) {
