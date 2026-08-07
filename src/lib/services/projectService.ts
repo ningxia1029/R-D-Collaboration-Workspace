@@ -1,0 +1,96 @@
+// 项目服务 + 生命周期阶段机
+import { prisma } from "@/lib/prisma";
+import { ApiError, visibleProjectIds, type SessionUser } from "@/lib/rbac";
+import { writeAudit } from "@/lib/audit";
+import { LIFECYCLE_STAGES, type LifecycleStage } from "@/lib/constants";
+import { getKitRate } from "@/lib/services/bomService";
+
+export async function listProjects(user: SessionUser) {
+  const ids = await visibleProjectIds(user);
+  const projects = await prisma.project.findMany({
+    where: ids === null ? {} : { id: { in: ids } },
+    include: {
+      owner: { select: { id: true, name: true } },
+      product: { select: { id: true, name: true, code: true } },
+      _count: { select: { tasks: true, bomItems: true, changeLogs: true, members: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  // 每个项目的进度（任务完成率）
+  const withProgress = await Promise.all(
+    projects.map(async (p) => {
+      const done = await prisma.task.count({ where: { projectId: p.id, status: "Done" } });
+      const total = p._count.tasks;
+      return { ...p, progress: total === 0 ? 0 : Math.round((done / total) * 100) };
+    })
+  );
+  return withProgress;
+}
+
+export async function createProject(userId: string, data: Record<string, unknown>) {
+  const project = await prisma.project.create({
+    data: {
+      name: data.name as string,
+      code: data.code as string,
+      description: (data.description as string) ?? null,
+      ownerId: userId,
+      startDate: data.startDate ? new Date(data.startDate as string) : null,
+      endDate: data.endDate ? new Date(data.endDate as string) : null,
+      productId: (data.productId as string) ?? null,
+      members: { create: { userId } },
+    },
+  });
+  // 默认创建 POC 阶段
+  await prisma.phase.create({ data: { projectId: project.id, phaseName: "POC", sortOrder: 0, status: "active" } });
+  await writeAudit({ userId, action: "CREATE", entityType: "PROJECT", entityId: project.id, diff: { name: project.name } });
+  return project;
+}
+
+export async function updateProject(userId: string, id: string, data: Record<string, unknown>) {
+  const patch: Record<string, unknown> = {};
+  for (const f of ["name", "description", "status", "productId"]) if (f in data) patch[f] = data[f];
+  if ("startDate" in data) patch.startDate = data.startDate ? new Date(data.startDate as string) : null;
+  if ("endDate" in data) patch.endDate = data.endDate ? new Date(data.endDate as string) : null;
+  const project = await prisma.project.update({ where: { id }, data: patch });
+  await writeAudit({ userId, action: "UPDATE", entityType: "PROJECT", entityId: id, diff: patch });
+  return project;
+}
+
+// ==================== 生命周期阶段机 ====================
+
+const STAGE_ORDER: LifecycleStage[] = [...LIFECYCLE_STAGES];
+
+export async function transitionLifecycle(userId: string, projectId: string, toStage: LifecycleStage, comment?: string, force = false) {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
+  if (!project) throw new ApiError(404, "项目不存在");
+  const from = project.lifecycleStage as LifecycleStage;
+  const fromIdx = STAGE_ORDER.indexOf(from);
+  const toIdx = STAGE_ORDER.indexOf(toStage);
+  if (toIdx === fromIdx) throw new ApiError(400, "目标阶段与当前阶段相同");
+  if (toIdx > fromIdx + 1) throw new ApiError(400, "不允许跨阶段跳转");
+  if (toIdx < fromIdx - 1) throw new ApiError(400, "最多允许回退一级");
+
+  // 守卫规则
+  const warnings: string[] = [];
+  if (toStage === "PILOT") {
+    const activePhase = await prisma.phase.findFirst({ where: { projectId, status: "active" } });
+    const kit = await getKitRate(projectId, activePhase?.id ?? null);
+    if (kit.rate < 100) warnings.push(`当前阶段 BOM 齐套率仅 ${kit.rate}%，建议齐套后再进入试产`);
+  }
+  if (toStage === "MP") {
+    const p0Open = await prisma.task.count({ where: { projectId, priority: "P0", status: { not: "Done" } } });
+    const pendingEco = await prisma.changeLog.count({ where: { projectId, status: "PENDING" } });
+    if (p0Open > 0 && !force) throw new ApiError(400, `存在 ${p0Open} 个未完成的 P0 任务，禁止进入量产`);
+    if (pendingEco > 0 && !force) throw new ApiError(400, `存在 ${pendingEco} 个待审批的 ECO，禁止进入量产`);
+  }
+  if (warnings.length && !force) {
+    return { warning: true, warnings, project };
+  }
+
+  const updated = await prisma.project.update({ where: { id: projectId }, data: { lifecycleStage: toStage } });
+  await prisma.approvalRecord.create({
+    data: { targetType: "LIFECYCLE", targetId: projectId, approverId: userId, action: "APPROVE", comment: comment ?? `${from} → ${toStage}` },
+  });
+  await writeAudit({ userId, action: "LIFECYCLE", entityType: "PROJECT", entityId: projectId, diff: { from, to: toStage } });
+  return { warning: false, warnings: [], project: updated };
+}

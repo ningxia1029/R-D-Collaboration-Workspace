@@ -1,0 +1,489 @@
+// 公司级轻量级 PLM + 项目管理 + 工程知识库一体化平台
+// 命名约定：model PascalCase + @@map 保留开发文档表名；字段 camelCase + @map 保留 snake_case
+// 枚举全部用 String 存储（SQLite 无 enum），取值约束见 src/lib/constants.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== 开发文档原有 6 表（原样保留 + 扩展字段） ====================
+
+// [原文档] Projects —— 扩展：owner、生命周期、立项日期、关联产品
+model Project {
+  id             String    @id @default(cuid())
+  name           String
+  code           String    @unique
+  status         String    @default("active") // active / completed / archived
+  lifecycleStage String    @default("RD") @map("lifecycle_stage") // CONCEPT/RD/PILOT/MP/EOL
+  description    String?
+  ownerId        String?   @map("owner_id")
+  startDate      DateTime? @map("start_date")
+  endDate        DateTime? @map("end_date")
+  productId      String?   @map("product_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  owner          User?           @relation(fields: [ownerId], references: [id])
+  product        Product?        @relation(fields: [productId], references: [id])
+  phases         Phase[]
+  tasks          Task[]
+  bomItems       BomItem[]
+  techSpecs      TechSpec[]
+  changeLogs     ChangeLog[]
+  changeRequests ChangeRequest[]
+  milestones     Milestone[]
+  members        ProjectMember[]
+
+  @@map("Projects")
+}
+
+// [原文档] Phases —— phase_name: POC / EVT / DVT / PVT / Mass Production
+model Phase {
+  id         String    @id @default(cuid())
+  projectId  String    @map("project_id")
+  phaseName  String    @map("phase_name")
+  targetDate DateTime? @map("target_date")
+  sortOrder  Int       @default(0) @map("sort_order")
+  status     String    @default("pending") // pending / active / done
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+  bomItems  BomItem[]
+  techSpecs TechSpec[]
+
+  @@map("Phases")
+}
+
+// [原文档] Tasks —— 扩展：WBS 父子、负责人、工时、里程碑、甘特起始日
+model Task {
+  id             String    @id @default(cuid())
+  projectId      String    @map("project_id")
+  title          String
+  description    String?
+  status         String    @default("To Do") // To Do/In Progress/Blocked/Testing/Done
+  priority       String    @default("P2") // P0-P3
+  phaseId        String?   @map("phase_id")
+  dueDate        DateTime? @map("due_date")
+  startDate      DateTime? @map("start_date")
+  ecoId          String?   @map("eco_id")
+  parentId       String?   @map("parent_id")
+  assigneeId     String?   @map("assignee_id")
+  estimatedHours Float?    @map("estimated_hours")
+  isMilestone    Boolean   @default(false) @map("is_milestone")
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase        Phase?           @relation(fields: [phaseId], references: [id])
+  eco          ChangeLog?       @relation(fields: [ecoId], references: [id])
+  parent       Task?            @relation("TaskHierarchy", fields: [parentId], references: [id])
+  children     Task[]           @relation("TaskHierarchy")
+  assignee     User?            @relation(fields: [assigneeId], references: [id])
+  timeEntries  TimeEntry[]
+  predecessors TaskDependency[] @relation("successor")
+  successors   TaskDependency[] @relation("predecessor")
+  links        EntityLink[]
+
+  @@map("Tasks")
+}
+
+// [原文档] BOM_Items —— 扩展：物料库关联、产品结构节点、卡脖子标记
+model BomItem {
+  id            String    @id @default(cuid())
+  projectId     String    @map("project_id")
+  phaseId       String?   @map("phase_id")
+  materialId    String?   @map("material_id")
+  mpn           String
+  name          String
+  spec          String?
+  refDes        String?   @map("ref_des")
+  qty           Int       @default(1)
+  status        String    @default("Unordered") // Unordered/Ordered/In Transit/Arrived/Delayed
+  supplierUrl   String?   @map("supplier_url")
+  eta           DateTime?
+  ecoId         String?   @map("eco_id")
+  isCritical    Boolean   @default(false) @map("is_critical")
+  productNodeId String?   @map("product_node_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase    Phase?     @relation(fields: [phaseId], references: [id])
+  material Material?  @relation(fields: [materialId], references: [id])
+  eco      ChangeLog? @relation(fields: [ecoId], references: [id])
+
+  @@map("BOM_Items")
+}
+
+// [原文档] Tech_Specs —— 扩展：达标判定规则、固件版本绑定
+model TechSpec {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  phaseId         String?  @map("phase_id")
+  metricName      String   @map("metric_name")
+  targetValue     String?  @map("target_value")
+  actualValue     String?  @map("actual_value")
+  unit            String?
+  compareRule     String   @default("gte") @map("compare_rule") // gte / lte / eq
+  contentMd       String?  @map("content_md")
+  firmwareVersion String?  @map("firmware_version")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase   Phase?  @relation(fields: [phaseId], references: [id])
+
+  @@map("Tech_Specs")
+}
+
+// [原文档] Change_Logs (ECO) —— 扩展：审批状态机、ECR 溯源
+model ChangeLog {
+  id          String   @id @default(cuid())
+  projectId   String   @map("project_id")
+  ecoNumber   String   @unique @map("eco_number") // ECO-2026-001
+  type        String // Hardware / Mechanical / Firmware / BOM
+  reason      String?
+  description String?
+  versionFrom String?  @map("version_from")
+  versionTo   String?  @map("version_to")
+  status      String   @default("DRAFT") // DRAFT/PENDING/APPROVED/IMPLEMENTED/CLOSED
+  ecrId       String?  @unique @map("ecr_id")
+  createdBy   String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ecr      ChangeRequest? @relation(fields: [ecrId], references: [id])
+  tasks    Task[]
+  bomItems BomItem[]
+  impacts  ChangeImpact[]
+
+  @@map("Change_Logs")
+}
+
+// ==================== RBAC ====================
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  roleId       String   @map("role_id")
+  status       String   @default("active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  role          Role            @relation(fields: [roleId], references: [id])
+  memberships   ProjectMember[]
+  ownedProjects Project[]
+  assignedTasks Task[]
+  timeEntries   TimeEntry[]
+  documents     Document[]
+
+  @@map("Users")
+}
+
+model Role {
+  id          String  @id @default(cuid())
+  name        String  @unique // admin / pm / engineer / viewer
+  description String?
+
+  permissions RolePermission[]
+  users       User[]
+  members     ProjectMember[]
+
+  @@map("Roles")
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  code        String  @unique // e.g. "task:update", "eco:approve"
+  description String?
+
+  roles RolePermission[]
+
+  @@map("Permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("Role_Permissions")
+}
+
+// [扩展] 项目级数据权限：非 admin 仅能访问所属项目；项目内角色可覆盖全局角色
+model ProjectMember {
+  projectId String  @map("project_id")
+  userId    String  @map("user_id")
+  roleId    String? @map("role_id")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role    Role?   @relation(fields: [roleId], references: [id])
+
+  @@id([projectId, userId])
+  @@map("Project_Members")
+}
+
+// ==================== PLM：产品结构 / 物料库 / 版本 ====================
+
+// [扩展] 产品树：产品→部件→物料，自引用
+model Product {
+  id             String  @id @default(cuid())
+  name           String
+  code           String  @unique
+  parentId       String? @map("parent_id")
+  nodeType       String  @default("ASSEMBLY") @map("node_type") // PRODUCT/ASSEMBLY/COMPONENT/MATERIAL
+  materialId     String? @map("material_id")
+  qty            Int     @default(1)
+  currentVersion String? @map("current_version")
+  status         String  @default("active")
+
+  parent   Product?         @relation("ProductTree", fields: [parentId], references: [id])
+  children Product[]        @relation("ProductTree")
+  material Material?        @relation(fields: [materialId], references: [id])
+  versions ProductVersion[]
+  projects Project[]
+
+  @@map("Products")
+}
+
+// [扩展] 跨项目共享物料主数据
+model Material {
+  id                 String   @id @default(cuid())
+  mpn                String   @unique
+  name               String
+  spec               String?
+  manufacturer       String?
+  category           String?
+  unit               String?
+  defaultSupplierUrl String?  @map("default_supplier_url")
+  status             String   @default("active")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  bomItems     BomItem[]
+  productNodes Product[]
+
+  @@map("Materials")
+}
+
+// [扩展] 产品/部件版本历史
+model ProductVersion {
+  id         String   @id @default(cuid())
+  productId  String   @map("product_id")
+  version    String
+  note       String?
+  ecoId      String?  @map("eco_id")
+  releasedAt DateTime @default(now()) @map("released_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("Product_Versions")
+}
+
+// ==================== 工程变更：ECR / 影响面 / 审批 ====================
+
+// [扩展] ECR 变更申请
+model ChangeRequest {
+  id          String   @id @default(cuid())
+  ecrNumber   String   @unique @map("ecr_number") // ECR-2026-001
+  projectId   String   @map("project_id")
+  title       String
+  type        String // Hardware / Mechanical / Firmware / BOM
+  reason      String?
+  description String?
+  status      String   @default("DRAFT") // DRAFT/SUBMITTED/APPROVED/REJECTED/CONVERTED
+  requestedBy String?  @map("requested_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  eco     ChangeLog?
+
+  @@map("Change_Requests")
+}
+
+// [扩展] ECO 影响范围（多态关联，应用层约束）
+model ChangeImpact {
+  id         String  @id @default(cuid())
+  ecoId      String  @map("eco_id")
+  entityType String  @map("entity_type") // BOM_ITEM / TASK / TECH_SPEC / PRODUCT
+  entityId   String  @map("entity_id")
+  note       String?
+
+  eco ChangeLog @relation(fields: [ecoId], references: [id], onDelete: Cascade)
+
+  @@map("Change_Impacts")
+}
+
+// [扩展] 通用审批记录（ECR/ECO/生命周期流转共用，多态无外键）
+model ApprovalRecord {
+  id         String   @id @default(cuid())
+  targetType String   @map("target_type") // ECR / ECO / LIFECYCLE
+  targetId   String   @map("target_id")
+  approverId String   @map("approver_id")
+  action     String // SUBMIT / APPROVE / REJECT / IMPLEMENT / CONVERT
+  comment    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("Approval_Records")
+}
+
+// ==================== 项目管理扩展 ====================
+
+// [扩展] 任务依赖（FS 连线，类型字段预留 SS/FF/SF）
+model TaskDependency {
+  id            String @id @default(cuid())
+  predecessorId String @map("predecessor_id")
+  successorId   String @map("successor_id")
+  type          String @default("FS")
+  lagDays       Int    @default(0) @map("lag_days")
+
+  predecessor Task @relation("predecessor", fields: [predecessorId], references: [id], onDelete: Cascade)
+  successor   Task @relation("successor", fields: [successorId], references: [id], onDelete: Cascade)
+
+  @@unique([predecessorId, successorId])
+  @@map("Task_Dependencies")
+}
+
+// [扩展] 里程碑
+model Milestone {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  name      String
+  date      DateTime
+  phaseId   String?  @map("phase_id")
+  status    String   @default("pending") // pending / done / missed
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("Milestones")
+}
+
+// [扩展] 工时记录（资源负载视图数据源）
+model TimeEntry {
+  id        String   @id @default(cuid())
+  taskId    String   @map("task_id")
+  userId    String   @map("user_id")
+  date      DateTime
+  hours     Float
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("Time_Entries")
+}
+
+// ==================== 工程知识库 ====================
+
+model Document {
+  id          String   @id @default(cuid())
+  title       String
+  category    String? // 设计规范 / 调试笔记 / 失效分析 / 经验案例 …
+  summary     String?
+  projectId   String?  @map("project_id") // null = 跨项目通用
+  productId   String?  @map("product_id")
+  createdBy   String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator  User?         @relation(fields: [createdBy], references: [id])
+  versions DocVersion[]
+  tags     DocumentTag[]
+
+  @@map("Documents")
+}
+
+// [扩展] 文档版本历史（最新版全文进 FTS）
+model DocVersion {
+  id         String   @id @default(cuid())
+  documentId String   @map("document_id")
+  version    Int
+  contentMd  String   @map("content_md")
+  changeNote String?  @map("change_note")
+  createdBy  String?  @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, version])
+  @@map("Doc_Versions")
+}
+
+model Tag {
+  id   String @id @default(cuid())
+  name String @unique
+
+  docs DocumentTag[]
+
+  @@map("Tags")
+}
+
+model DocumentTag {
+  documentId String @map("document_id")
+  tagId      String @map("tag_id")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, tagId])
+  @@map("Document_Tags")
+}
+
+// ==================== 跨模块打通 / 审计 ====================
+
+// [扩展] 任务 ↔ 产品/BOM条目/知识库文档/ECO 通用追溯关联
+model EntityLink {
+  id         String  @id @default(cuid())
+  taskId     String? @map("task_id")
+  entityType String  @map("entity_type") // PRODUCT / BOM_ITEM / DOCUMENT / TECH_SPEC / ECO
+  entityId   String  @map("entity_id")
+
+  task Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("Entity_Links")
+}
+
+// [扩展] 评论（多态，应用层约束）
+model Comment {
+  id         String   @id @default(cuid())
+  entityType String   @map("entity_type") // TASK / ECO / ECR / DOCUMENT
+  entityId   String   @map("entity_id")
+  userId     String   @map("user_id")
+  content    String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("Comments")
+}
+
+// [扩展] 审计日志
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  action     String // CREATE / UPDATE / DELETE / STATUS_CHANGE / AUTO_BLOCK ...
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  diffJson   String?  @map("diff_json")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("Audit_Logs")
+}
+
+// [扩展] 单号序列发生器（ECO-2026-001，事务内自增避免并发重号）
+model SequenceCounter {
+  key   String @id // e.g. "ECO-2026"
+  value Int    @default(0)
+
+  @@map("Sequence_Counters")
+}

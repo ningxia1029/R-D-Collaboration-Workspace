@@ -1,0 +1,60 @@
+{
+  "name": "plm-project-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "公司级轻量级 PLM + 项目管理 + 工程知识库一体化平台",
+  "main": "desktop/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "postinstall": "prisma generate || echo \"prisma generate 失败，可稍后手动运行 npm run db:push\"",
+    "db:push": "prisma db push",
+    "db:seed": "prisma db seed",
+    "setup": "prisma db push && prisma db seed",
+    "typecheck": "tsc --noEmit",
+    "build:desktop": "node scripts/build-desktop.mjs"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.5.2",
+    "@ant-design/nextjs-registry": "^1.0.2",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@prisma/client": "^5.22.0",
+    "@uiw/react-md-editor": "^4.0.5",
+    "antd": "^5.22.5",
+    "bcryptjs": "^2.4.3",
+    "dayjs": "^1.11.13",
+    "frappe-gantt": "^0.6.1",
+    "mermaid": "^11.4.1",
+    "next": "^14.2.21",
+    "next-auth": "5.0.0-beta.25",
+    "papaparse": "^5.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.3",
+    "recharts": "^2.15.0",
+    "rehype-highlight": "^7.0.1",
+    "remark-gfm": "^4.0.0",
+    "sass": "^1.77.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.17.10",
+    "@types/papaparse": "^5.3.15",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "electron-updater": "^6.3.9",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

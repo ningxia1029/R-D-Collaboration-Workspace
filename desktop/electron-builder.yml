@@ -1,0 +1,30 @@
+# PLM 研发协同平台 —— electron-builder 配置（portable 免安装）
+appId: com.plm.workspace
+productName: PLM-Workspace
+copyright: Copyright © 2026
+
+directories:
+  output: release
+
+files:
+  - desktop/main.js
+  - desktop/preload.js
+  - desktop/updater.js
+  - builtin-env.json
+  - package.json
+  - .next/standalone/**/*
+
+asarUnpack:
+  - "**/*.node"
+
+win:
+  target:
+    - portable
+  icon: desktop/icon.ico
+
+portable:
+  artifactName: "PLM平台-${version}-便携版.exe"
+
+npmRebuild: false
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

@@ -1,0 +1,17 @@
+node_modules/
+.next/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env.local
+.DS_Store
+.env
+builtin-env.json
+release/
+dist/
+.dev-run.log
+*.tsbuildinfo
+.next-*/
+.npm-cache*/
+.workbuddy/
