@@ -185,11 +185,12 @@ ipcMain.handle("app:get-info", () => ({
 }));
 
 // ============ 生命周期 ============
-// 软件渲染：兼容远程桌面/虚拟机/无独显环境（无 GPU 时避免 FATAL 退出）
+// 软件渲染：兼容远程桌面/虚拟机/无独显环境。
+// 独立 GPU 进程在驱动异常环境会崩溃并触发 FATAL；in-process-gpu 将 GPU 线程并入主进程（软件渲染）以彻底规避。
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("disable-gpu-compositing");
-app.commandLine.appendSwitch("disable-software-rasterizer");
+app.commandLine.appendSwitch("in-process-gpu");
 app.whenReady().then(async () => {
   const cfg = loadConfig();
   const started = await startServer(cfg);
