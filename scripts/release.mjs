@@ -10,15 +10,17 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"))
 const version = process.argv[2] || pkg.version;
 
 const releaseDir = path.join(root, "dist");
-const exe = fs
+const artifacts = fs
   .readdirSync(releaseDir)
-  .find((f) => f.endsWith(".exe") && !f.includes("unpacked"));
-if (!exe) {
+  .filter((f) => (f.endsWith(".exe") || f.endsWith(".zip")) && !f.includes("unpacked"));
+if (artifacts.length === 0) {
   console.error("❌ 未找到打包产物，请先运行 npm run build:desktop");
   process.exit(1);
 }
-const exePath = path.join(releaseDir, exe);
-console.log(`发布 v${version}：${exe}（${(fs.statSync(exePath).size / 1024 / 1024).toFixed(1)} MB）`);
+console.log(
+  `发布 v${version}：` +
+    artifacts.map((f) => `${f}（${(fs.statSync(path.join(releaseDir, f)).size / 1024 / 1024).toFixed(1)} MB）`).join(" + ")
+);
 
 const tag = `v${version}`;
 const notes = [
@@ -45,8 +47,9 @@ try {
 execSync(`git push origin ${tag}`, { cwd: root, stdio: "pipe" });
 console.log("tag 已推送");
 
+const artifactPaths = artifacts.map((f) => path.join(releaseDir, f)).join('" "');
 execSync(
-  `gh release create ${tag} "${exePath}" --title "PLM 研发协同平台 v${version}" --notes-file "${tmpNotes}"`,
+  `gh release create ${tag} "${artifactPaths}" --title "PLM 研发协同平台 v${version}" --notes-file "${tmpNotes}"`,
   { cwd: root, stdio: "inherit" }
 );
 fs.unlinkSync(tmpNotes);
