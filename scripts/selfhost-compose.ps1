@@ -1,9 +1,47 @@
 [CmdletBinding()]
 param(
+  [Alias('d')][switch]$Detach,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$ComposeArgs
 )
 
+function Normalize-ComposeArguments {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$ComposeArguments,
+    [switch]$Detach
+  )
+
+  if (-not $Detach) {
+    return $ComposeArguments
+  }
+
+  $upIndex = -1
+  for ($index = 0; $index -lt $ComposeArguments.Count; $index++) {
+    if ($ComposeArguments[$index] -eq "--detach") {
+      throw "Use either -d or --detach, not both."
+    }
+    if ($ComposeArguments[$index] -eq "up") {
+      if ($upIndex -ne -1) {
+        throw "Detach shorthand requires exactly one up subcommand."
+      }
+      $upIndex = $index
+    }
+  }
+  if ($upIndex -lt 0) {
+    throw "Detach shorthand is only valid with the up subcommand."
+  }
+
+  $normalized = [System.Collections.Generic.List[string]]::new()
+  for ($index = 0; $index -lt $ComposeArguments.Count; $index++) {
+    [void]$normalized.Add($ComposeArguments[$index])
+    if ($index -eq $upIndex) {
+      [void]$normalized.Add("--detach")
+    }
+  }
+  return $normalized.ToArray()
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $repoRoot ".env.selfhost"
 $composePath = Join-Path $repoRoot "docker-compose.selfhost.yml"
@@ -104,5 +142,7 @@ foreach ($backupItem in $backupItems) {
   Set-PrivateBackupAcl -Path $backupItem.FullName -AllowedSids $allowedSids -AllowedSidValues $allowedSidValues
 }
 
+$ComposeArgs = Normalize-ComposeArguments -ComposeArguments $ComposeArgs -Detach:$Detach
 & docker compose --project-name "workbuddy-selfhost" --env-file $envPath -f $composePath @ComposeArgs
 exit $LASTEXITCODE
+}

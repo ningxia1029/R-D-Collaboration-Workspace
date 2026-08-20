@@ -13,7 +13,7 @@
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/new-selfhost-env.ps1
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 config --quiet
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --build -d db migrate app
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach --build db migrate app
 ```
 
 `migrate` 会先于应用完成 Prisma migration。一次性演示数据仅可显式执行 `demo-seed` profile，且 seed 会清表；只允许对空的隔离 UAT 数据库操作，绝不能在已有业务数据或其他环境执行：
@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile 
 启动 tunnel：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up -d tunnel
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up --detach tunnel
 ```
 
 办公电脑必须保持开机并联网；本地 tunnel 不具备云端常驻服务的可用性。
@@ -45,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile 
 启动自动备份：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -d backup
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach backup
 ```
 
 恢复默认是离线 dry-run：验证文件名、同名 SHA-256 和 archive 可读性，**不会连接或写数据库**。先替换为实际备份名执行；dry-run 不必停止任何服务：
@@ -67,7 +67,7 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile 
 ```powershell
 $backupDirectory = Join-Path (Get-Location) "backups\selfhost"
 $beforeBackupNames = @(Get-ChildItem -LiteralPath $backupDirectory -Filter "workbuddy-*.dump" -File | ForEach-Object Name)
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -d --force-recreate backup
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach --force-recreate backup
 $deadline = (Get-Date).AddMinutes(2)
 $newBackup = @()
 do {
@@ -90,9 +90,9 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 stop tunne
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile restore run --rm -e "BACKUP_FILE=$backupName" -e RESTORE_EXECUTE=1 -e RESTORE_TARGET_ACK=workbuddy_selfhost_uat restore
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 run --rm migrate
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 run --rm --no-deps --entrypoint psql restore -c "SELECT current_database();"
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -d app backup
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach app backup
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 exec app node -e "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up -d tunnel
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up --detach tunnel
 ```
 
 `scripts/selfhost-compose.ps1` 每次运行都会将 `backups/selfhost` 的 ACL 收紧到当前 Windows SID、SYSTEM 和 Builtin Administrators；该操作不递归修改其他目录。可在本机检查 ACL：

@@ -227,6 +227,23 @@ test("生成器在 Windows PowerShell 5.1 中不传 OutputPath 时使用脚本�
   }
 });
 
+test("自托管 Compose wrapper 将裸 -d 重构为 up 后的 --detach", () => {
+  const wrapper = path.resolve("scripts/selfhost-compose.ps1").replace(/'/g, "''");
+  const command = `& { . '${wrapper}'; (Normalize-ComposeArguments -ComposeArguments @('up', '--build', 'db', 'migrate', 'app') -Detach) -join ' ' }`;
+  const result = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-Command", command], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "up --detach --build db migrate app");
+  const source = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
+  assert.match(source, /\[Alias\('d'\)\]\[switch\]\$Detach/);
+  assert.match(source, /Normalize-ComposeArguments -ComposeArguments \$ComposeArgs -Detach:\$Detach/);
+  for (const args of ["@('ps')", "@('up', '--detach')"]) {
+    const invalid = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-Command", `& { . '${wrapper}'; Normalize-ComposeArguments -ComposeArguments ${args} -Detach }`], { encoding: "utf8" });
+    assert.notEqual(invalid.status, 0);
+  }
+  const docs = `${fs.readFileSync("docs/SELF_HOSTED_UAT.md", "utf8")}\n${fs.readFileSync("docs/superpowers/plans/2026-08-20-self-hosted-uat.md", "utf8")}`;
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-d\b/);
+});
+
 test("自托管备份、恢复和运行手册维持可审计且默认无写入的数据库运维边界", () => {
   const compose = fs.readFileSync("docker-compose.selfhost.yml", "utf8");
   const backup = fs.readFileSync("scripts/selfhost-backup.sh", "utf8");

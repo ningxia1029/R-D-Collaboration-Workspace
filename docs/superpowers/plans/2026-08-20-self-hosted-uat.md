@@ -195,7 +195,7 @@ Expected: `.env.selfhost` 存在且显示为 ignored；命令输出不包含任�
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 config --quiet`
 
-Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --build -d db migrate app`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach --build db migrate app`
 
 Expected: 只创建 `workbuddy-selfhost_*` 容器、网络与 `workbuddy-selfhost_workbuddy_selfhost_pgdata` 卷；既有 `cf-tunnel` 和 `workbuddy-uat_workbuddy_uat_pgdata` 保持原状态。
 
@@ -203,7 +203,7 @@ Expected: 只创建 `workbuddy-selfhost_*` 容器、网络与 `workbuddy-selfhos
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile demo-seed run --rm seed`
 
-Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -d backup`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach backup`
 
 Expected: seed 仅在明确 profile 下执行；备份目录生成非空 `.dump` 与匹配 `.sha256`。
 
@@ -221,7 +221,7 @@ Expected: live/ready 返回成功；恢复只列出归档、不执行写入；�
 
 用户在 Cloudflare 创建 `workbuddy-plm-uat` tunnel 和 published application route，hostname 使用用户确认的域名，Service URL 固定 `http://app:3000`；将独立 tunnel token 仅写入 `.env.selfhost`。建议在发布 route 前建立 Cloudflare Access Allow policy，否则公网将直接到达应用登录页。
 
-Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up -d tunnel`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up --detach tunnel`
 
 Expected: 新容器名属于 `workbuddy-selfhost`，Tunnel 为 healthy；既有 `cf-tunnel` 不重启、不重建。
 
