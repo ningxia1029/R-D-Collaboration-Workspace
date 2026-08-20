@@ -42,7 +42,7 @@
 
 - 浏览器用例验证未登录边界、安全响应头、API 401 与窄屏横向溢出，不等同于真实企业账号的完整业务 RBAC UAT。
 - deterministic 微基准不代表真实性能；DeepSeek live 指标包含真实模型和网络但只使用合成 Tool；PostgreSQL 16 全链路使用 fake acceptance Provider。两类证据不能拼接成真实模型的产品端到端 P95。
-- 恢复演练使用本机隔离 PostgreSQL 14.23；GitHub Actions 的 PostgreSQL 16 作业只是已配置，尚无远端成功记录。
+- 2026-08-20 GitHub Actions Run `32331496928` 已在 PostgreSQL 16 完成 10 个迁移、在线索引、零 drift、备份 SHA-256、单事务恢复及源/目标摘要比较。
 - 桌面包 `codeSigned=false`、内外层 Authenticode 均为 `NotSigned`、`signedExecutables=[]`，且 provenance 为 `sourceDirty=true`；未执行 tag、push 或 Release。
 - DeepSeek V4 Flash 非思考 Provider/Harness 已完成脱敏基线，隔离 Web→Worker→真实 Tool Gateway→PostgreSQL/SSE 已用确定性 Provider 通过；尚未完成修复后的 DeepSeek full 复测、真实模型产品端到端 P95/成本、思考模式、企业 IdP、生产域名/证书、SIEM、正式代码签名证书和两版可回退安装包。
 

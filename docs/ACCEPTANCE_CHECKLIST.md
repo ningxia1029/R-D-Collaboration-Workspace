@@ -9,13 +9,13 @@
 - [x] Electron 主进程、更新器、桌面构建与发布脚本语法检查通过。
 - [x] `npm audit --audit-level=high`：0 个漏洞。
 - [ ] API 集成测试覆盖关键 RBAC、事务回滚和并发状态流转。
-- [x] Playwright 四角色真实写操作 UAT：2026-08-20 在本机隔离 PostgreSQL 16 `workbuddy_uat` 通过 1/1；远端 `workbench-rbac-uat` CI 首次成功记录仍待取得。
+- [x] Playwright 四角色真实写操作 UAT：2026-08-20 本机隔离库与远端 PostgreSQL 16 `workbench-rbac-uat` 均通过 1/1；远端证据为 Run `32331496928`。
 
 ## 数据库
 
 - [x] 本机隔离 PostgreSQL 16 已执行 `migrate deploy`，识别 10 个迁移且无待应用迁移。
 - [x] 本机 UAT 从空库完成迁移、受控 demo seed 与应用启动演练。
-- [ ] 执行备份、SHA-256 校验、隔离恢复和业务数据抽样。
+- [x] 远端 PostgreSQL 16 已执行备份、SHA-256、单事务隔离恢复、零 drift 与 7 类表摘要比较；Run `32331496928`。
 - [ ] 验证旧数据上的追溯关联使用实体 ID；修复历史上可能写入 MPN 的记录。
 
 ## 权限与安全
@@ -24,7 +24,7 @@
 - [ ] 停用用户和降权用户的现有 JWT 立即失效验证。
 - [ ] XSS、跨项目 ID、批量 ID 混入、恶意 Mermaid/搜索摘要回归。
 - [ ] 网关级限流、HTTPS、Cookie/CSRF 和生产密钥轮换完成。
-- [ ] 依赖漏洞已清零或经书面风险接受。
+- [x] 依赖漏洞已清零：远端 `npm audit --audit-level=high` 通过。
 
 ## 桌面与发布
 
@@ -59,5 +59,5 @@
 - [x] 最新源码 Docker runner 重建成功；Next.js 48/48 页面生成，standalone 环境文件数为 0。
 - [x] PostgreSQL 16 UAT 容器、迁移容器和应用容器启动成功；`/api/health/live` 返回 `live`，`/api/health/ready` 返回 `ready`。
 - [x] 管理员创建账号、强制首次改密、密码策略、会话版本撤销和并发改密 CAS 已实现并通过自动化测试；未开放公共自助注册。
-- [x] 四角色真实写操作 UAT 本机通过 1/1；远端 GitHub Actions 尚未运行，不能记为 CI 通过。
+- [x] 四角色真实写操作 UAT 本机与远端 PostgreSQL 16 均通过 1/1；质量、迁移恢复、桌面 smoke 和 RBAC 四项 CI 全绿。
 - [ ] 正式云平台、域名、DNS、TLS、生产网关限流、密钥轮换和企业 IdP 尚未配置。

@@ -11,8 +11,8 @@
 | 依赖安全 | 本地通过 | `npm audit` 与 `npm audit --omit=dev` 均为 0 |
 | Next 生产构建 | 本地通过 | Next 15.5.23，48/48 页面生成；Docker standalone 环境文件 0 |
 | 浏览器安全 | 本地通过 | Chromium 桌面/移动 4/4；未登录页面/API、CSP/安全头、横向溢出 |
-| 数据库迁移/恢复 | 隔离 PG14 通过 | 9/9 migration、5/5 在线索引、备份 SHA-256、双库 7 类表摘要一致、零 drift |
-| PostgreSQL 16 | 本机 UAT 通过；远端 CI 待跑 | Docker `postgres:16`，10/10 migration、受控 seed、应用 ready；四角色真实写操作 1/1 |
+| 数据库迁移/恢复 | 远端 PG16 通过 | 10/10 migration、在线索引、零 drift、备份 SHA-256、单事务恢复及双库 7 类表摘要一致；Run `32331496928` |
+| PostgreSQL 16 | 本机与远端 CI 通过 | Docker `postgres:16` 应用 ready；四角色真实写操作 1/1；Run `32331496928` |
 | 性能与成本 | 仅微基准通过 | 最终复跑 5,000 次 deterministic Provider Adapter，P95 0.439ms、0 错误、0 模型成本；不代表真实端到端 |
 | 超时/恢复/并发 | 本地工程通过 | 有界超时、限流、检查点恢复、Action 并发幂等及数据库恢复测试 |
 | Agent 全链路 | 隔离 PostgreSQL 16 通过 | 登录、Run API、独立 Worker、HTTP 控制面、真实 Tool Gateway、PostgreSQL 与 SSE 1/1；项目解析失败后后续项目 Tool 0 次；Provider 为本地 acceptance fake |
@@ -22,7 +22,7 @@
 | 真实模型 | 本地 Provider/Harness 基线通过，生产仍待验收 | DeepSeek V4 Flash 非思考模式：90/90 完整、87/90（96.7%）、权限/敏感数据泄露及未确认写入均为 0、P95 3.69s、成本约 $0.005971；仅合成 Tool，运行时门禁修复后尚未用新 Key 重跑 full，也不代表真实模型的数据库/Web/SSE 端到端 |
 | 桌面构建 | 未签名 smoke 通过 | Electron 43.4.0；exe/zip 哈希一致、2,706 zip entries、环境文件 0 |
 | 桌面签名/升级回滚 | 阻断 | `codeSigned=false`、Authenticode `NotSigned`；没有两个签名版本的升级/回退演练 |
-| 干净源码发布 | 阻断 | 当前工作树脏；provenance `sourceDirty=true`；发布脚本会拒绝 |
+| 干净源码发布 | RC 已关闭，正式包仍阻断 | RC `6279dd8` 已推送且四项 CI 全绿；现有桌面 provenance 仍为 `sourceDirty=true`，必须从合并后的干净提交签名重建 |
 | 用户验收 | 阻断 | 尚未获得项目负责人对真实环境与最终 Release 的确认 |
 
 只有所有阻断项关闭、证据带有环境/日期/命令/责任人且项目负责人确认后，才允许把 ALG-43、ALG-34 和相关 ALG-23 范围标记完成并执行 Release。
