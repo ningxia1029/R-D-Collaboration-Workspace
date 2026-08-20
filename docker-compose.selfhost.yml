@@ -1,0 +1,153 @@
+name: workbuddy-selfhost
+
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restricted-security: &restricted-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+
+services:
+  preflight:
+    build:
+      context: .
+      target: uat-tools
+    environment:
+      SELFHOST_POSTGRES_PASSWORD: ${SELFHOST_POSTGRES_PASSWORD:?请设置 SELFHOST_POSTGRES_PASSWORD}
+      SELFHOST_AUTH_SECRET: ${SELFHOST_AUTH_SECRET:?请设置至少 32 位的 SELFHOST_AUTH_SECRET}
+      SELFHOST_BACKUP_INTERVAL_SECONDS: ${SELFHOST_BACKUP_INTERVAL_SECONDS:-86400}
+      SELFHOST_BACKUP_RETENTION_DAYS: ${SELFHOST_BACKUP_RETENTION_DAYS:-7}
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: ["npx", "tsx", "scripts/validate-selfhost-env.ts"]
+    restart: "no"
+    networks: [backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: workbuddy_selfhost_uat
+      POSTGRES_USER: workbuddy_selfhost
+      POSTGRES_PASSWORD: ${SELFHOST_POSTGRES_PASSWORD:?请设置 SELFHOST_POSTGRES_PASSWORD}
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workbuddy_selfhost -d workbuddy_selfhost_uat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - workbuddy_selfhost_uat_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks: [backend]
+    logging: *bounded-logging
+    # 官方入口需在首次挂载命名卷时 chown，并降权为 postgres；仅保留这三个启动能力。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+
+  migrate:
+    build:
+      context: .
+      target: migration
+    environment:
+      DATABASE_URL: postgresql://workbuddy_selfhost:${SELFHOST_POSTGRES_PASSWORD}@db:5432/workbuddy_selfhost_uat
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks: [backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  seed:
+    profiles: ["demo-seed"]
+    build:
+      context: .
+      target: uat-tools
+    environment:
+      NODE_ENV: uat
+      DEMO_SEED_ALLOW: "1"
+      DEMO_SEED_TARGET_ACK: workbuddy_selfhost_uat
+      DEMO_SEED_PASSWORD: ${SELFHOST_DEMO_PASSWORD:?请设置 SELFHOST_DEMO_PASSWORD}
+      DATABASE_URL: postgresql://workbuddy_selfhost:${SELFHOST_POSTGRES_PASSWORD}@db:5432/workbuddy_selfhost_uat
+    command: ["npx", "prisma", "db", "seed"]
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  app:
+    build:
+      context: .
+      target: runner
+    environment:
+      DATABASE_URL: postgresql://workbuddy_selfhost:${SELFHOST_POSTGRES_PASSWORD}@db:5432/workbuddy_selfhost_uat
+      AUTH_SECRET: ${SELFHOST_AUTH_SECRET:?请设置至少 32 位的 SELFHOST_AUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      DEPLOYMENT_ENV: uat
+      AUTH_RATE_LIMIT_MODE: isolated-uat
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${SELFHOST_APP_PORT:-3010}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    networks: [frontend, backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  tunnel:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared@sha256:0aa26e284f05e6c77ae375b8c9c11d9eb6a448fb7bcd8d40f31cb6176189eb38
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate run
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [frontend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+volumes:
+  workbuddy_selfhost_uat_pgdata:
+
+networks:
+  frontend:
+  backend:
+    internal: true
