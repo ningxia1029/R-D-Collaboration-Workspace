@@ -2,7 +2,7 @@
 
 ## 自动化门禁
 
-- [x] `npm run test`：122/122 通过（含账号生命周期、文档权限范围与状态 CAS 回归）。
+- [x] `npm run test`：123/123 通过（含账号生命周期、文档权限范围与状态 CAS 回归）。
 - [x] `npm run typecheck -- --incremental false`：通过。
 - [x] `npx prisma validate`：通过。
 - [x] `npm run build`：通过。

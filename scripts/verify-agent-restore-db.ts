@@ -60,6 +60,7 @@ async function seed(): Promise<void> {
     message: `p8-message-${suffix}`,
     approval: `p8-approval-${suffix}`,
   };
+  const approvalCreatedAt = new Date();
   await source.$transaction(async (tx) => {
     await tx.role.create({ data: { id: ids.role, name: `phase8-${suffix}`, description: "阶段 8 恢复演练" } });
     await tx.user.create({ data: { id: ids.user, email: `${ids.user}@invalid.local`, name: "阶段 8 恢复用户", passwordHash: "acceptance-only", roleId: ids.role } });
@@ -67,7 +68,7 @@ async function seed(): Promise<void> {
     await tx.task.create({ data: { id: ids.task, projectId: ids.project, title: "恢复演练任务", createdBy: ids.user, assigneeId: ids.user } });
     await tx.agentRun.create({ data: { id: ids.run, userId: ids.user, sessionId: `p8-session-${suffix}`, status: "WAITING_FOR_USER", promptVersion: "plm-agent-system@1.2.0", retentionUntil: new Date("2026-09-12T00:00:00.000Z") } });
     await tx.agentMessage.create({ data: { id: ids.message, runId: ids.run, sequence: 1, role: "user", content: "阶段 8 恢复演练消息", redacted: false } });
-    await tx.agentApprovalRequest.create({ data: { id: ids.approval, runId: ids.run, requestedById: ids.user, status: "PENDING", actionType: "TASK_UPDATE_LOW_RISK", riskLevel: "LOW", targetEntityType: "TASK", targetEntityId: ids.task, expectedVersion: "2026-08-13T00:00:00.000Z", proposalJson: { changes: { priority: "P1" } }, idempotencyKey: `p8-proposal-${suffix}`, expiresAt: new Date("2026-08-13T01:00:00.000Z") } });
+    await tx.agentApprovalRequest.create({ data: { id: ids.approval, runId: ids.run, requestedById: ids.user, status: "PENDING", actionType: "TASK_UPDATE_LOW_RISK", riskLevel: "LOW", targetEntityType: "TASK", targetEntityId: ids.task, expectedVersion: "2026-08-13T00:00:00.000Z", proposalJson: { changes: { priority: "P1" } }, idempotencyKey: `p8-proposal-${suffix}`, expiresAt: new Date(approvalCreatedAt.getTime() + 60 * 60 * 1000) } });
   });
   const result = await snapshot(source);
   console.log(`[agent-restore] mode=seed source=${sourceName} counts=${JSON.stringify(result.counts)} digest=${result.digest}`);

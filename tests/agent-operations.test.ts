@@ -20,6 +20,13 @@ test("阶段 8 CI 固定 Node 24、PostgreSQL 16 与完整质量/恢复门禁", 
   }
 });
 
+test("恢复演练审批夹具按运行时间生成未来过期值", async () => {
+  const restoreFixture = await readFile("scripts/verify-agent-restore-db.ts", "utf8");
+  assert.match(restoreFixture, /const approvalCreatedAt = new Date\(\)/);
+  assert.match(restoreFixture, /expiresAt:\s*new Date\(approvalCreatedAt\.getTime\(\) \+ 60 \* 60 \* 1000\)/);
+  assert.doesNotMatch(restoreFixture, /expiresAt:\s*new Date\("\d{4}-\d{2}-\d{2}/);
+});
+
 test("正式发布同时要求干净提交、哈希一致和真实代码签名 provenance", async () => {
   const [releaseScript, desktopBuild] = await Promise.all([
     readFile("scripts/release.mjs", "utf8"),
