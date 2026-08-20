@@ -1,3 +1,5 @@
+export {};
+
 const postgresPassword = process.env.SELFHOST_POSTGRES_PASSWORD ?? "";
 const authSecret = process.env.SELFHOST_AUTH_SECRET ?? "";
 const tunnelToken = process.env.CLOUDFLARE_TUNNEL_TOKEN ?? "";

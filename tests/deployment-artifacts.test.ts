@@ -69,6 +69,7 @@ test("UAT seed 脚本具有数据库名和人工确认双门禁", () => {
 
 test("UAT 环境预检拒绝需要 URL 编码的数据库密码和公开占位密钥", () => {
   const script = fs.readFileSync("scripts/validate-uat-env.ts", "utf8");
+  assert.match(script, /^export \{\};$/m);
   assert.match(script, /\^\[A-Za-z0-9\._~-\]\+\$/);
   assert.match(script, /postgresPassword\.length < 24/);
   assert.match(script, /authSecret\.length < 32/);
@@ -159,6 +160,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   assert.doesNotMatch(generator, /Write-(?:Host|Output|Error).*SELFHOST_(?:POSTGRES_PASSWORD|AUTH_SECRET|DEMO_PASSWORD)/i);
   assert.match(generator, /\[Console\]::Out\.WriteLine\(\$resolvedOutput\)/);
   assert.match(validator, /\^\[A-Za-z0-9\._~-\]\+\$/);
+  assert.match(validator, /^export \{\};$/m);
   assert.match(validator, /postgresPassword\.length < 24/);
   assert.match(validator, /authSecret\.length < 32/);
   assert.match(validator, /postgresPassword === authSecret/);
