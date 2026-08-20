@@ -5,9 +5,11 @@ import { Card, Table, Button, Space, App, Modal, Form, Input, Select, Tag, Typog
 import { PlusOutlined } from "@ant-design/icons";
 import { get, post, patch } from "@/lib/api-client";
 import { ROLE_LABELS, type RoleName } from "@/lib/constants";
+import { validatePassword } from "@/lib/passwordPolicy";
 
 interface User {
   id: string; email: string; name: string; status: string;
+  mustChangePassword: boolean;
   role: { id: string; name: string };
   _count: { memberships: number; assignedTasks: number };
 }
@@ -75,6 +77,10 @@ export default function AdminUsersPage() {
             title: "状态", dataIndex: "status", width: 100,
             render: (v) => <Tag color={v === "active" ? "success" : "default"}>{v === "active" ? "启用" : "停用"}</Tag>,
           },
+          {
+            title: "密码状态", width: 110,
+            render: (_, r) => r.mustChangePassword ? <Tag color="warning">待首次改密</Tag> : <Tag color="success">已设置</Tag>,
+          },
           { title: "参与项目", dataIndex: ["_count", "memberships"], width: 100, align: "right" },
           { title: "负责任务", dataIndex: ["_count", "assignedTasks"], width: 100, align: "right" },
           {
@@ -99,8 +105,22 @@ export default function AdminUsersPage() {
           <Form.Item name="roleId" label="全局角色" rules={[{ required: true }]}>
             <Select options={roles.map((r) => ({ value: r.id, label: r.description ?? r.name }))} />
           </Form.Item>
-          <Form.Item name="password" label={editing ? "重置密码（留空不改）" : "初始密码"} rules={editing ? [] : [{ required: true, min: 8, message: "至少 8 位" }]}>
-            <Input.Password placeholder={editing ? "留空保持不变" : "至少 8 位"} />
+          <Form.Item
+            name="password"
+            label={editing ? "重置临时密码（留空不改）" : "初始临时密码"}
+            extra="至少 12 位，包含大小写字母、数字和特殊字符；用户首次登录必须修改。"
+            rules={[
+              { required: !editing, message: "请输入初始临时密码" },
+              {
+                validator: async (_, value) => {
+                  if (!value && editing) return;
+                  const result = validatePassword(value ?? "");
+                  if (!result.valid) throw new Error(result.errors.join("；"));
+                },
+              },
+            ]}
+          >
+            <Input.Password placeholder={editing ? "留空保持不变" : "至少 12 位强密码"} />
           </Form.Item>
           {editing && (
             <Form.Item name="status" label="状态">

@@ -38,7 +38,10 @@ model Project {
   changeRequests ChangeRequest[]
   milestones     Milestone[]
   members        ProjectMember[]
+  activityEvents ActivityEvent[]
 
+  @@index([status, lifecycleStage])
+  @@index([ownerId])
   @@map("Projects")
 }
 
@@ -56,6 +59,7 @@ model Phase {
   bomItems  BomItem[]
   techSpecs TechSpec[]
 
+  @@index([projectId, sortOrder])
   @@map("Phases")
 }
 
@@ -80,17 +84,22 @@ model Task {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phase        Phase?           @relation(fields: [phaseId], references: [id])
-  eco          ChangeLog?       @relation(fields: [ecoId], references: [id])
-  parent       Task?            @relation("TaskHierarchy", fields: [parentId], references: [id])
-  children     Task[]           @relation("TaskHierarchy")
-  assignee     User?            @relation(fields: [assigneeId], references: [id])
-  timeEntries  TimeEntry[]
-  predecessors TaskDependency[] @relation("successor")
-  successors   TaskDependency[] @relation("predecessor")
-  links        EntityLink[]
+  project                 Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase                   Phase?                   @relation(fields: [phaseId], references: [id])
+  eco                     ChangeLog?               @relation(fields: [ecoId], references: [id])
+  parent                  Task?                    @relation("TaskHierarchy", fields: [parentId], references: [id])
+  children                Task[]                   @relation("TaskHierarchy")
+  assignee                User?                    @relation(fields: [assigneeId], references: [id])
+  timeEntries             TimeEntry[]
+  resourcePlanAllocations ResourcePlanAllocation[]
+  predecessors            TaskDependency[]         @relation("successor")
+  successors              TaskDependency[]         @relation("predecessor")
+  links                   EntityLink[]
 
+  @@index([projectId, status])
+  @@index([projectId, assigneeId])
+  @@index([projectId, phaseId])
+  @@index([dueDate])
   @@map("Tasks")
 }
 
@@ -119,6 +128,9 @@ model BomItem {
   material Material?  @relation(fields: [materialId], references: [id])
   eco      ChangeLog? @relation(fields: [ecoId], references: [id])
 
+  @@index([projectId, status])
+  @@index([projectId, phaseId])
+  @@index([projectId, eta])
   @@map("BOM_Items")
 }
 
@@ -140,6 +152,7 @@ model TechSpec {
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   phase   Phase?  @relation(fields: [phaseId], references: [id])
 
+  @@index([projectId, phaseId])
   @@map("Tech_Specs")
 }
 
@@ -164,28 +177,93 @@ model ChangeLog {
   bomItems BomItem[]
   impacts  ChangeImpact[]
 
+  @@index([projectId, status, createdAt])
   @@map("Change_Logs")
 }
 
 // ==================== RBAC ====================
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String
-  passwordHash String   @map("password_hash")
-  roleId       String   @map("role_id")
-  status       String   @default("active")
-  createdAt    DateTime @default(now()) @map("created_at")
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  name                String
+  passwordHash        String   @map("password_hash")
+  roleId              String   @map("role_id")
+  status              String   @default("active")
+  mustChangePassword  Boolean  @default(false) @map("must_change_password")
+  passwordChangedAt   DateTime? @map("password_changed_at")
+  sessionVersion      Int      @default(1) @map("session_version")
+  primaryOrgUnitId    String?  @map("primary_org_unit_id")
+  positionId          String?  @map("position_id")
+  managerId           String?  @map("manager_id")
+  weeklyCapacityHours Float?   @map("weekly_capacity_hours")
+  createdAt           DateTime @default(now()) @map("created_at")
 
-  role          Role            @relation(fields: [roleId], references: [id])
-  memberships   ProjectMember[]
-  ownedProjects Project[]
-  assignedTasks Task[]
-  timeEntries   TimeEntry[]
-  documents     Document[]
+  role                    Role                   @relation(fields: [roleId], references: [id])
+  primaryOrgUnit          OrgUnit?               @relation("OrgUnitMembers", fields: [primaryOrgUnitId], references: [id], onDelete: SetNull)
+  position                Position?              @relation(fields: [positionId], references: [id], onDelete: SetNull)
+  manager                 User?                  @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports           User[]                 @relation("UserManager")
+  managedOrgUnits         OrgUnit[]              @relation("OrgUnitManager")
+  memberships             ProjectMember[]
+  ownedProjects           Project[]
+  assignedTasks           Task[]
+  timeEntries             TimeEntry[]
+  documents               Document[]
+  agentRuns               AgentRun[]
+  agentFeedback           AgentFeedback[]
+  requestedAgentApprovals AgentApprovalRequest[] @relation("AgentApprovalRequester")
+  decidedAgentApprovals   AgentApprovalRequest[] @relation("AgentApprovalDecider")
+  activityEvents          ActivityEvent[]        @relation("ActivityActor")
+  agentControlUpdates     AgentControlSetting[]  @relation("AgentControlUpdater")
+  resourcePlanWindows     ResourcePlanWindow[]   @relation("ResourcePlanOwner")
+  createdResourcePlans    ResourcePlanWindow[]   @relation("ResourcePlanCreator")
 
+  @@index([roleId, status])
+  @@index([primaryOrgUnitId])
+  @@index([positionId])
+  @@index([managerId])
   @@map("Users")
+}
+
+// ==================== 组织与人员架构 ====================
+
+// 首版组织模型：一人一个主部门；跨职能协作继续使用 ProjectMember。
+model OrgUnit {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  parentId  String?  @map("parent_id")
+  managerId String?  @map("manager_id")
+  status    String   @default("active") // active / inactive
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent    OrgUnit?   @relation("OrgUnitTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  OrgUnit[]  @relation("OrgUnitTree")
+  manager   User?      @relation("OrgUnitManager", fields: [managerId], references: [id], onDelete: SetNull)
+  members   User[]     @relation("OrgUnitMembers")
+  positions Position[]
+
+  @@index([parentId, status])
+  @@index([managerId])
+  @@map("Org_Units")
+}
+
+model Position {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  orgUnitId String?  @map("org_unit_id")
+  status    String   @default("active") // active / inactive
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orgUnit OrgUnit? @relation(fields: [orgUnitId], references: [id], onDelete: SetNull)
+  users   User[]
+
+  @@index([orgUnitId, status])
+  @@map("Positions")
 }
 
 model Role {
@@ -232,6 +310,7 @@ model ProjectMember {
   role    Role?   @relation(fields: [roleId], references: [id])
 
   @@id([projectId, userId])
+  @@index([userId])
   @@map("Project_Members")
 }
 
@@ -306,9 +385,10 @@ model ChangeRequest {
   requestedBy String?  @map("requested_by")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  project Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   eco     ChangeLog?
 
+  @@index([projectId, status, createdAt])
   @@map("Change_Requests")
 }
 
@@ -322,6 +402,7 @@ model ChangeImpact {
 
   eco ChangeLog @relation(fields: [ecoId], references: [id], onDelete: Cascade)
 
+  @@index([ecoId, entityType])
   @@map("Change_Impacts")
 }
 
@@ -335,6 +416,7 @@ model ApprovalRecord {
   comment    String?
   createdAt  DateTime @default(now()) @map("created_at")
 
+  @@index([targetType, targetId, createdAt])
   @@map("Approval_Records")
 }
 
@@ -352,6 +434,7 @@ model TaskDependency {
   successor   Task @relation("successor", fields: [successorId], references: [id], onDelete: Cascade)
 
   @@unique([predecessorId, successorId])
+  @@index([successorId])
   @@map("Task_Dependencies")
 }
 
@@ -366,6 +449,7 @@ model Milestone {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  @@index([projectId, date])
   @@map("Milestones")
 }
 
@@ -382,26 +466,69 @@ model TimeEntry {
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id])
 
+  @@index([taskId, date])
+  @@index([userId, date])
   @@map("Time_Entries")
+}
+
+// 发布窗口用于区分“该时段计划为 0”和“该时段尚未提供计划数据”。
+model ResourcePlanWindow {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  dateFrom  DateTime @map("date_from") @db.Date
+  dateTo    DateTime @map("date_to") @db.Date
+  status    String   @default("draft") // draft / published / archived
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user        User                     @relation("ResourcePlanOwner", fields: [userId], references: [id], onDelete: Cascade)
+  creator     User                     @relation("ResourcePlanCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  allocations ResourcePlanAllocation[]
+
+  @@index([userId, status, dateFrom, dateTo])
+  @@index([createdBy])
+  @@map("Resource_Plan_Windows")
+}
+
+model ResourcePlanAllocation {
+  id           String   @id @default(cuid())
+  planWindowId String   @map("plan_window_id")
+  taskId       String   @map("task_id")
+  date         DateTime @db.Date
+  hours        Float
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  planWindow ResourcePlanWindow @relation(fields: [planWindowId], references: [id], onDelete: Cascade)
+  task       Task               @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([planWindowId, taskId, date])
+  @@index([taskId, date])
+  @@index([planWindowId, date])
+  @@map("Resource_Plan_Allocations")
 }
 
 // ==================== 工程知识库 ====================
 
 model Document {
-  id          String   @id @default(cuid())
-  title       String
-  category    String? // 设计规范 / 调试笔记 / 失效分析 / 经验案例 …
-  summary     String?
-  projectId   String?  @map("project_id") // null = 跨项目通用
-  productId   String?  @map("product_id")
-  createdBy   String?  @map("created_by")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id        String   @id @default(cuid())
+  title     String
+  category  String? // 设计规范 / 调试笔记 / 失效分析 / 经验案例 …
+  summary   String?
+  projectId String?  @map("project_id") // null = 跨项目通用
+  productId String?  @map("product_id")
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  creator  User?         @relation(fields: [createdBy], references: [id])
-  versions DocVersion[]
-  tags     DocumentTag[]
+  creator     User?                @relation(fields: [createdBy], references: [id])
+  versions    DocVersion[]
+  tags        DocumentTag[]
+  agentChunks AgentDocumentChunk[]
 
+  @@index([projectId, updatedAt])
+  @@index([category])
   @@map("Documents")
 }
 
@@ -415,10 +542,38 @@ model DocVersion {
   createdBy  String?  @map("created_by")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document    Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  agentChunks AgentDocumentChunk[]
 
   @@unique([documentId, version])
+  @@index([documentId, createdAt])
   @@map("Doc_Versions")
+}
+
+// Agent 知识检索只索引每个文档的最新版片段；projectId 是 ACL 快照，读取时仍按 Documents.project_id 二次鉴权。
+model AgentDocumentChunk {
+  id                      String   @id @default(cuid())
+  documentId              String   @map("document_id")
+  docVersionId            String   @map("doc_version_id")
+  projectId               String?  @map("project_id")
+  ordinal                 Int
+  sectionPathJson         Json     @map("section_path_json")
+  contentText             String   @map("content_text")
+  contentHash             String   @map("content_hash")
+  indexVersion            String   @map("index_version")
+  promptInjectionDetected Boolean  @default(false) @map("prompt_injection_detected")
+  sourceUpdatedAt         DateTime @map("source_updated_at")
+  indexedAt               DateTime @default(now()) @map("indexed_at")
+
+  document   Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  docVersion DocVersion @relation(fields: [docVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([docVersionId, ordinal])
+  @@index([documentId, docVersionId])
+  @@index([projectId, sourceUpdatedAt])
+  @@index([indexVersion])
+  @@index([promptInjectionDetected])
+  @@map("Agent_Document_Chunks")
 }
 
 model Tag {
@@ -452,6 +607,8 @@ model EntityLink {
 
   task Task? @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
+  @@unique([taskId, entityType, entityId])
+  @@index([entityType, entityId])
   @@map("Entity_Links")
 }
 
@@ -464,20 +621,268 @@ model Comment {
   content    String
   createdAt  DateTime @default(now()) @map("created_at")
 
+  @@index([entityType, entityId, createdAt])
   @@map("Comments")
 }
 
 // [扩展] 审计日志
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?  @map("user_id")
-  action     String // CREATE / UPDATE / DELETE / STATUS_CHANGE / AUTO_BLOCK ...
-  entityType String   @map("entity_type")
-  entityId   String   @map("entity_id")
-  diffJson   String?  @map("diff_json")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id            String   @id @default(cuid())
+  userId        String?  @map("user_id")
+  projectId     String?  @map("project_id")
+  correlationId String?  @map("correlation_id")
+  eventType     String?  @map("event_type")
+  action        String // CREATE / UPDATE / DELETE / STATUS_CHANGE / AUTO_BLOCK ...
+  entityType    String   @map("entity_type")
+  entityId      String   @map("entity_id")
+  diffJson      String?  @map("diff_json")
+  metadataJson  String?  @map("metadata_json")
+  createdAt     DateTime @default(now()) @map("created_at")
 
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([correlationId])
   @@map("Audit_Logs")
+}
+
+// ==================== Agent 运行、审计与事件治理 ====================
+
+model AgentRun {
+  id                    String    @id @default(cuid())
+  userId                String    @map("user_id")
+  sessionId             String    @map("session_id")
+  status                String    @default("QUEUED") // QUEUED/RUNNING/WAITING_FOR_USER/SUCCEEDED/FAILED/CANCELLED/EXPIRED
+  currentNode           String?   @map("current_node")
+  promptVersion         String?   @map("prompt_version")
+  modelProvider         String?   @map("model_provider")
+  modelName             String?   @map("model_name")
+  inputHash             String?   @map("input_hash")
+  scopeJson             Json?     @map("scope_json")
+  idempotencyKey        String?   @unique @map("idempotency_key")
+  containsSensitiveData Boolean   @default(false) @map("contains_sensitive_data")
+  inputTokenCount       Int?      @map("input_token_count")
+  outputTokenCount      Int?      @map("output_token_count")
+  estimatedCostMicros   Int?      @map("estimated_cost_micros")
+  startedAt             DateTime? @map("started_at")
+  completedAt           DateTime? @map("completed_at")
+  heartbeatAt           DateTime? @map("heartbeat_at")
+  leaseOwnerId          String?   @map("lease_owner_id")
+  leaseExpiresAt        DateTime? @map("lease_expires_at")
+  leaseVersion          Int       @default(0) @map("lease_version")
+  stepCount             Int       @default(0) @map("step_count")
+  toolCallCount         Int       @default(0) @map("tool_call_count")
+  resultBytes           Int       @default(0) @map("result_bytes")
+  cancelRequestedAt     DateTime? @map("cancel_requested_at")
+  expiresAt             DateTime? @map("expires_at")
+  retentionUntil        DateTime? @map("retention_until")
+  failureCode           String?   @map("failure_code")
+  failureMessage        String?   @map("failure_message")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  messages       AgentMessage[]
+  events         AgentRunEvent[]
+  toolExecutions AgentToolExecution[]
+  checkpoints    AgentCheckpoint[]
+  feedback       AgentFeedback[]
+  approvals      AgentApprovalRequest[]
+
+  @@index([userId, createdAt])
+  @@index([status, heartbeatAt])
+  @@index([status, leaseExpiresAt])
+  @@index([sessionId, createdAt])
+  @@map("Agent_Runs")
+}
+
+model AgentMessage {
+  id          String   @id @default(cuid())
+  runId       String   @map("run_id")
+  sequence    Int
+  role        String // user / assistant / system / tool
+  content     String?
+  contentJson Json?    @map("content_json")
+  redacted    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sequence])
+  @@index([runId, createdAt])
+  @@map("Agent_Messages")
+}
+
+// 可回放的 Run 事件流；与自然语言消息分离，供 SSE 重连和状态审计。
+model AgentRunEvent {
+  id        String   @id @default(cuid())
+  runId     String   @map("run_id")
+  sequence  Int
+  eventType String   @map("event_type")
+  payload   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sequence])
+  @@index([runId, createdAt])
+  @@map("Agent_Run_Events")
+}
+
+model AgentToolExecution {
+  id                String    @id @default(cuid())
+  runId             String    @map("run_id")
+  requestId         String    @unique @map("request_id")
+  toolName          String    @map("tool_name")
+  contractVersion   String    @default("1.0") @map("contract_version")
+  status            String    @default("RUNNING") // RUNNING/SUCCEEDED/FAILED/CANCELLED
+  inputHash         String?   @map("input_hash")
+  inputSummaryJson  Json?     @map("input_summary_json")
+  outputSummaryJson Json?     @map("output_summary_json")
+  evidenceJson      Json?     @map("evidence_json")
+  projectIdsJson    Json?     @map("project_ids_json")
+  errorCode         String?   @map("error_code")
+  retryCount        Int       @default(0) @map("retry_count")
+  durationMs        Int?      @map("duration_ms")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@index([toolName, status, createdAt])
+  @@map("Agent_Tool_Executions")
+}
+
+model AgentCheckpoint {
+  id                 String   @id @default(cuid())
+  runId              String   @map("run_id")
+  checkpointNs       String   @default("") @map("checkpoint_ns")
+  checkpointId       String   @map("checkpoint_id")
+  parentCheckpointId String?  @map("parent_checkpoint_id")
+  stateJson          Json     @map("state_json")
+  metadataJson       Json?    @map("metadata_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, checkpointNs, checkpointId])
+  @@index([runId, createdAt])
+  @@map("Agent_Checkpoints")
+}
+
+model AgentFeedback {
+  id        String   @id @default(cuid())
+  runId     String   @map("run_id")
+  userId    String   @map("user_id")
+  rating    String // UP / DOWN
+  category  String?
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run  AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, userId])
+  @@index([rating, createdAt])
+  @@map("Agent_Feedback")
+}
+
+model AgentApprovalRequest {
+  id                      String    @id @default(cuid())
+  runId                   String    @map("run_id")
+  requestedById           String?   @map("requested_by_id")
+  decidedById             String?   @map("decided_by_id")
+  status                  String    @default("PENDING") // PENDING/APPROVED/REJECTED/EXPIRED/CANCELLED/EXECUTED/CONFLICT/FAILED
+  actionType              String    @map("action_type")
+  riskLevel               String    @map("risk_level")
+  targetEntityType        String?   @map("target_entity_type")
+  targetEntityId          String?   @map("target_entity_id")
+  expectedVersion         String?   @map("expected_version")
+  proposalJson            Json      @map("proposal_json")
+  proposalHash            String?   @map("proposal_hash")
+  approvalNonceHash       String?   @map("approval_nonce_hash")
+  idempotencyKey          String    @unique @map("idempotency_key")
+  executionIdempotencyKey String?   @unique @map("execution_idempotency_key")
+  executionResultJson     Json?     @map("execution_result_json")
+  readbackJson            Json?     @map("readback_json")
+  failureCode             String?   @map("failure_code")
+  failureMessage          String?   @map("failure_message")
+  expiresAt               DateTime  @map("expires_at")
+  decidedAt               DateTime? @map("decided_at")
+  executedAt              DateTime? @map("executed_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  run         AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  requestedBy User?    @relation("AgentApprovalRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedBy   User?    @relation("AgentApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([runId, status])
+  @@index([status, expiresAt])
+  @@index([targetEntityType, targetEntityId])
+  @@map("Agent_Approval_Requests")
+}
+
+// Agent 总开关和 Tool allowlist 覆盖；单例 id=default，由管理员维护。
+model AgentControlSetting {
+  id                 String   @id @default("default")
+  enabled            Boolean  @default(false)
+  disabledToolsJson  Json?    @map("disabled_tools_json")
+  maintenanceMessage String?  @map("maintenance_message")
+  updatedById        String?  @map("updated_by_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  updatedBy User? @relation("AgentControlUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedById])
+  @@map("Agent_Control_Settings")
+}
+
+// 结构化业务活动是周报与增量索引的事实源，不从实体当前快照反推历史。
+model ActivityEvent {
+  id            String   @id @default(cuid())
+  projectId     String?  @map("project_id")
+  actorUserId   String?  @map("actor_user_id")
+  eventType     String   @map("event_type")
+  entityType    String   @map("entity_type")
+  entityId      String   @map("entity_id")
+  correlationId String?  @map("correlation_id")
+  payloadJson   Json?    @map("payload_json")
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actor   User?    @relation("ActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, occurredAt])
+  @@index([entityType, entityId, occurredAt])
+  @@index([correlationId])
+  @@map("Activity_Events")
+}
+
+// 与业务事务一同写入，Worker 成功处理后标记完成；dedupKey 防止重复发布。
+model OutboxEvent {
+  id            String    @id @default(cuid())
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
+  eventType     String    @map("event_type")
+  dedupKey      String    @unique @map("dedup_key")
+  payloadJson   Json      @map("payload_json")
+  status        String    @default("PENDING") // PENDING/PROCESSING/PROCESSED/FAILED/DEAD
+  attempts      Int       @default(0)
+  availableAt   DateTime  @default(now()) @map("available_at")
+  lockedAt      DateTime? @map("locked_at")
+  processedAt   DateTime? @map("processed_at")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, availableAt])
+  @@index([aggregateType, aggregateId, createdAt])
+  @@map("Outbox_Events")
 }
 
 // [扩展] 单号序列发生器（ECO-2026-001，事务内自增避免并发重号）

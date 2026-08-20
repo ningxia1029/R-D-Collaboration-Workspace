@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, Table, Button, Modal, Form, Input, DatePicker, Select, Progress, Space, Typography, App, Tag } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { Alert, Card, Table, Button, Modal, Form, Input, DatePicker, Select, Progress, Space, Typography, App, Tag } from "antd";
+import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import Link from "next/link";
 import dayjs from "dayjs";
 import { get, post } from "@/lib/api-client";
@@ -24,6 +24,7 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
   const { message } = App.useApp();
@@ -32,7 +33,15 @@ export default function ProjectsPage() {
 
   const load = () => {
     setLoading(true);
-    get<Project[]>("/api/projects").then(setProjects).catch((e) => message.error(e.message)).finally(() => setLoading(false));
+    setLoadError("");
+    get<Project[]>("/api/projects")
+      .then(setProjects)
+      .catch((e) => {
+        setProjects([]);
+        setLoadError(e.message);
+        message.error(e.message);
+      })
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -69,6 +78,15 @@ export default function ProjectsPage() {
       title="项目列表"
       extra={canCreate && <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>立项</Button>}
     >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="项目加载失败，并非暂无数据"
+          description={<Space>{loadError}<Button size="small" icon={<ReloadOutlined />} onClick={load}>重试</Button></Space>}
+        />
+      )}
       <Table
         rowKey="id"
         loading={loading}
@@ -110,6 +128,10 @@ export default function ProjectsPage() {
                 {r.startDate ? dayjs(r.startDate).format("YYYY-MM-DD") : "—"} ~ {r.endDate ? dayjs(r.endDate).format("YYYY-MM-DD") : "—"}
               </Typography.Text>
             ),
+          },
+          {
+            title: "操作", width: 110, fixed: "right",
+            render: (_, r) => <Link href={`/projects/${r.id}/settings`}>查看 / 设置</Link>,
           },
         ]}
       />

@@ -1,6 +1,6 @@
 // Dashboard 聚合统计服务
 import { prisma } from "@/lib/prisma";
-import { visibleProjectIds, type SessionUser } from "@/lib/rbac";
+import { effectiveRole, roleHasPerm, visibleProjectIds, type SessionUser } from "@/lib/rbac";
 
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86400000);
 
@@ -53,8 +53,8 @@ export async function getDashboardSummary(user: SessionUser) {
     }),
     prisma.changeLog.groupBy({ by: ["type"], where: pidFilter, _count: { _all: true } }),
     prisma.changeLog.groupBy({ by: ["status"], where: pidFilter, _count: { _all: true } }),
-    prisma.document.count(),
-    prisma.document.count({ where: { updatedAt: { gte: daysFromNow(-7) } } }),
+    prisma.document.count({ where: ids === null ? {} : { OR: [{ projectId: null }, { projectId: { in: ids } }] } }),
+    prisma.document.count({ where: { ...(ids === null ? {} : { OR: [{ projectId: null }, { projectId: { in: ids } }] }), updatedAt: { gte: daysFromNow(-7) } } }),
   ]);
 
   // 项目健康度：任务完成率 + 是否有 Blocked / Delayed
@@ -94,14 +94,17 @@ export async function getDashboardSummary(user: SessionUser) {
 /** 资源负载：按成员聚合 预估工时 vs 已登记工时 */
 export async function getWorkload(user: SessionUser, projectId?: string) {
   const ids = await visibleProjectIds(user);
+  if (projectId && ids !== null && !ids.includes(projectId)) return [];
   const pidFilter = projectId ? { projectId } : ids === null ? {} : { projectId: { in: ids } };
+  const role = projectId ? await effectiveRole(user, projectId) : user.roleName;
+  const canReadAllTime = roleHasPerm(role, "time:read_all");
 
   const tasks = await prisma.task.findMany({
-    where: { ...pidFilter, assigneeId: { not: null }, status: { not: "Done" } },
+    where: { ...pidFilter, assigneeId: canReadAllTime ? { not: null } : user.id, status: { not: "Done" } },
     select: { assigneeId: true, estimatedHours: true },
   });
   const entries = await prisma.timeEntry.findMany({
-    where: { task: pidFilter },
+    where: { task: pidFilter, ...(canReadAllTime ? {} : { userId: user.id }) },
     select: { userId: true, hours: true },
   });
 
@@ -111,7 +114,7 @@ export async function getWorkload(user: SessionUser, projectId?: string) {
   for (const e of entries) logged.set(e.userId, (logged.get(e.userId) ?? 0) + e.hours);
 
   const userIds = [...new Set([...estimated.keys(), ...logged.keys()])];
-  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } });
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } });
   return users.map((u) => ({
     user: u,
     estimatedHours: Math.round((estimated.get(u.id) ?? 0) * 10) / 10,

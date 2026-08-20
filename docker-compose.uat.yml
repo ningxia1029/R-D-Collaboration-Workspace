@@ -1,0 +1,84 @@
+name: workbuddy-uat
+
+services:
+  preflight:
+    build:
+      context: .
+      target: uat-tools
+    environment:
+      UAT_POSTGRES_PASSWORD: ${UAT_POSTGRES_PASSWORD:?请设置 UAT_POSTGRES_PASSWORD}
+      UAT_AUTH_SECRET: ${UAT_AUTH_SECRET:?请设置至少 32 字节的 UAT_AUTH_SECRET}
+    command: ["npx", "tsx", "scripts/validate-uat-env.ts"]
+    restart: "no"
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: workbuddy_uat
+      POSTGRES_USER: workbuddy_uat
+      POSTGRES_PASSWORD: ${UAT_POSTGRES_PASSWORD:?请设置 UAT_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workbuddy_uat -d workbuddy_uat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "127.0.0.1:${UAT_DB_PORT:-55432}:5432"
+    volumes:
+      - workbuddy_uat_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      target: migration
+    environment:
+      DATABASE_URL: postgresql://workbuddy_uat:${UAT_POSTGRES_PASSWORD}@db:5432/workbuddy_uat
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    profiles: ["demo-seed"]
+    build:
+      context: .
+      target: uat-tools
+    environment:
+      DATABASE_URL: postgresql://workbuddy_uat:${UAT_POSTGRES_PASSWORD}@db:5432/workbuddy_uat
+      UAT_SEED_TARGET_ACK: workbuddy_uat
+      UAT_DEMO_PASSWORD: ${UAT_DEMO_PASSWORD:?请设置符合强密码策略的 UAT_DEMO_PASSWORD}
+    command: ["npx", "tsx", "scripts/seed-uat.ts"]
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    environment:
+      DATABASE_URL: postgresql://workbuddy_uat:${UAT_POSTGRES_PASSWORD}@db:5432/workbuddy_uat
+      AUTH_SECRET: ${UAT_AUTH_SECRET:?请设置至少 32 字节的 UAT_AUTH_SECRET}
+      AUTH_TRUST_HOST: "true"
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      DEPLOYMENT_ENV: "uat"
+      AUTH_RATE_LIMIT_MODE: "isolated-uat"
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${UAT_APP_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  workbuddy_uat_pgdata:

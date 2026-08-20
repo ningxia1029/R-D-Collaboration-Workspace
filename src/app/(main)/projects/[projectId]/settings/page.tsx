@@ -1,30 +1,32 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, Table, Button, Space, Select, App, Modal, Form, Input, DatePicker, Popconfirm, Tag, Row, Col, Typography } from "antd";
+import { Alert, Card, Table, Button, Space, Select, App, Modal, Form, Input, DatePicker, Popconfirm, Tag, Row, Col, Typography } from "antd";
 import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useParams } from "next/navigation";
 import dayjs from "dayjs";
-import { useSession } from "next-auth/react";
 import { get, post, patch, del } from "@/lib/api-client";
-import { PHASE_NAMES } from "@/lib/constants";
+import { PHASE_NAMES, PROJECT_STATUSES } from "@/lib/constants";
 import { StatusTag } from "@/components/common/Tags";
 import { useProject } from "../ProjectContext";
 
 interface Member { userId: string; roleId?: string | null; user: { id: string; name: string; email: string }; role?: { id: string; name: string; description?: string | null } | null }
 interface Role { id: string; name: string; description?: string }
 interface User { id: string; name: string; email: string }
+interface ProductOption { id: string; name: string; code: string }
 
 export default function ProjectSettingsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { project, reload } = useProject();
   const { message } = App.useApp();
-  const { data: session } = useSession();
-  const canManage = ["admin", "pm"].includes(session?.user?.roleName ?? "");
+  const canManage = project?.currentUserAccess.permissions.includes("project:update") ?? false;
 
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
+  const [savingProject, setSavingProject] = useState(false);
+  const [projectForm] = Form.useForm();
   const [phaseForm] = Form.useForm();
   const [msForm] = Form.useForm();
   const [phaseOpen, setPhaseOpen] = useState(false);
@@ -36,10 +38,43 @@ export default function ProjectSettingsPage() {
 
   useEffect(() => {
     loadMembers();
-    get<Role[]>("/api/admin/roles").then(setRoles).catch(() => undefined);
-    get<User[]>("/api/users").then(setUsers).catch(() => undefined);
+    if (canManage) {
+      get<Role[]>("/api/admin/roles").then(setRoles).catch(() => undefined);
+      get<User[]>("/api/users").then(setUsers).catch(() => undefined);
+      get<ProductOption[]>("/api/plm/products").then(setProducts).catch(() => undefined);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, canManage]);
+
+  useEffect(() => {
+    if (!project) return;
+    projectForm.setFieldsValue({
+      name: project.name,
+      description: project.description,
+      status: project.status,
+      productId: project.productId ?? project.product?.id,
+      startDate: project.startDate ? dayjs(project.startDate) : null,
+      endDate: project.endDate ? dayjs(project.endDate) : null,
+    });
+  }, [project, projectForm]);
+
+  const saveProject = async () => {
+    const values = await projectForm.validateFields();
+    setSavingProject(true);
+    try {
+      await patch(`/api/projects/${projectId}`, {
+        ...values,
+        startDate: values.startDate?.toISOString() ?? null,
+        endDate: values.endDate?.toISOString() ?? null,
+      });
+      message.success("项目基本信息已更新");
+      reload();
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setSavingProject(false);
+    }
+  };
 
   const addMember = async (userId: string) => {
     try {
@@ -95,7 +130,40 @@ export default function ProjectSettingsPage() {
   const memberIds = new Set(members.map((m) => m.userId));
 
   return (
-    <Row gutter={[16, 16]}>
+    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Card
+        size="small"
+        title="项目基本信息"
+        extra={canManage && <Button type="primary" loading={savingProject} onClick={saveProject}>保存项目</Button>}
+      >
+        <Form form={projectForm} layout="vertical" disabled={!canManage}>
+          <Row gutter={12}>
+            <Col xs={24} lg={8}>
+              <Form.Item name="name" label="项目名称" rules={[{ required: true, message: "请输入项目名称" }]}><Input /></Form.Item>
+            </Col>
+            <Col xs={24} lg={4}>
+              <Form.Item name="status" label="项目状态">
+                <Select options={PROJECT_STATUSES.map((value) => ({ value, label: value === "active" ? "进行中" : value === "completed" ? "已完成" : "已归档" }))} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} lg={5}>
+              <Form.Item name="productId" label="关联产品">
+                <Select allowClear showSearch optionFilterProp="label" options={products.map((item) => ({ value: item.id, label: `${item.code} ${item.name}` }))} />
+              </Form.Item>
+            </Col>
+            <Col xs={12} lg={3}><Form.Item name="startDate" label="开始日期"><DatePicker style={{ width: "100%" }} /></Form.Item></Col>
+            <Col xs={12} lg={4}><Form.Item name="endDate" label="目标日期"><DatePicker style={{ width: "100%" }} /></Form.Item></Col>
+            <Col span={24}><Form.Item name="description" label="项目描述"><Input.TextArea rows={2} /></Form.Item></Col>
+          </Row>
+        </Form>
+        <Alert
+          type="info"
+          showIcon
+          message="项目进度由已完成任务数 ÷ 任务总数自动计算；生命周期请使用项目标题栏的“阶段流转”，以保留守卫校验和审批记录。"
+        />
+      </Card>
+
+      <Row gutter={[16, 16]}>
       <Col xs={24} xl={10}>
         <Card
           size="small"
@@ -198,6 +266,8 @@ export default function ProjectSettingsPage() {
         </Card>
       </Col>
 
+      </Row>
+
       <Modal title="添加试制阶段" open={phaseOpen} onOk={addPhase} onCancel={() => setPhaseOpen(false)} okText="添加">
         <Form form={phaseForm} layout="vertical">
           <Form.Item name="phaseName" label="阶段名称" rules={[{ required: true }]}>
@@ -213,6 +283,6 @@ export default function ProjectSettingsPage() {
           <Form.Item name="date" label="日期" rules={[{ required: true }]}><DatePicker style={{ width: "100%" }} /></Form.Item>
         </Form>
       </Modal>
-    </Row>
+    </Space>
   );
 }

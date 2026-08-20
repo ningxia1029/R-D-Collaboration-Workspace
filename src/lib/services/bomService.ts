@@ -47,68 +47,78 @@ export async function listBomItems(projectId: string, phaseId?: string | null) {
 
 /** Delayed + isCritical 物料联动：自动 Block / 恢复组装任务 */
 export async function syncAssemblyBlock(userId: string | null, projectId: string, phaseId?: string | null) {
-  const delayedCritical = await prisma.bomItem.findMany({
-    where: { projectId, ...(phaseId ? { phaseId } : {}), status: "Delayed", isCritical: true },
-    select: { id: true, mpn: true },
-  });
+  return prisma.$transaction(async (tx) => {
+    const delayedCritical = await tx.bomItem.findMany({
+      where: { projectId, ...(phaseId ? { phaseId } : {}), status: "Delayed", isCritical: true },
+      select: { id: true, mpn: true },
+    });
 
-  // 关联了这些物料的任务 + 标题含组装/贴片/装配 的任务
-  const linkedTaskIds = delayedCritical.length
-    ? (
-        await prisma.entityLink.findMany({
-          where: {
-            entityType: "BOM_ITEM",
-            entityId: { in: delayedCritical.map((d) => d.mpn) },
-            taskId: { not: null },
-          },
-          select: { taskId: true },
-        })
-      ).map((l) => l.taskId!)
-    : [];
-  const assemblyTasks = await prisma.task.findMany({
-    where: {
-      projectId,
-      OR: [
-        { id: { in: linkedTaskIds } },
-        { title: { contains: "组装" } },
-        { title: { contains: "贴片" } },
-        { title: { contains: "装配" } },
-      ],
-    },
-  });
+    // 关联了这些物料的任务 + 标题含组装/贴片/装配 的任务
+    const linkedTaskIds = delayedCritical.length
+      ? (
+          await tx.entityLink.findMany({
+            where: {
+              entityType: "BOM_ITEM",
+              entityId: { in: delayedCritical.map((d) => d.id) },
+              taskId: { not: null },
+            },
+            select: { taskId: true },
+          })
+        ).map((l) => l.taskId!)
+      : [];
+    const autoBlockedIds = delayedCritical.length === 0
+      ? (await tx.auditLog.findMany({
+          where: { entityType: "TASK", action: "AUTO_BLOCK" },
+          distinct: ["entityId"],
+          select: { entityId: true },
+        })).map((row) => row.entityId)
+      : [];
+    const assemblyTasks = await tx.task.findMany({
+      where: {
+        projectId,
+        OR: [
+          { id: { in: linkedTaskIds } },
+          { id: { in: autoBlockedIds } },
+          { title: { contains: "组装" } },
+          { title: { contains: "贴片" } },
+          { title: { contains: "装配" } },
+        ],
+      },
+    });
 
-  if (delayedCritical.length > 0) {
-    // Block 未完成的任务
-    for (const task of assemblyTasks) {
-      if (task.status !== "Done" && task.status !== "Blocked") {
-        await prisma.task.update({ where: { id: task.id }, data: { status: "Blocked" } });
-        await writeAudit({
-          userId, action: "AUTO_BLOCK", entityType: "TASK", entityId: task.id,
-          diff: { from: task.status, to: "Blocked", reason: `卡脖子物料延迟: ${delayedCritical.map((d) => d.mpn).join(", ")}` },
-        });
+    if (delayedCritical.length > 0) {
+      let blocked = 0;
+      for (const task of assemblyTasks) {
+        if (task.status !== "Done" && task.status !== "Blocked") {
+          await tx.task.update({ where: { id: task.id }, data: { status: "Blocked" } });
+          await writeAudit({
+            userId, action: "AUTO_BLOCK", entityType: "TASK", entityId: task.id,
+            diff: { from: task.status, to: "Blocked", reason: `卡脖子物料延迟: ${delayedCritical.map((d) => d.mpn).join(", ")}` },
+          }, tx);
+          blocked += 1;
+        }
       }
+      return { blocked, delayed: delayedCritical.map((d) => d.mpn) };
     }
-    return { blocked: assemblyTasks.length, delayed: delayedCritical.map((d) => d.mpn) };
-  }
 
-  // 无延迟卡脖子物料 → 恢复被自动 Block 的任务（查审计日志确认是 AUTO_BLOCK 的）
-  for (const task of assemblyTasks) {
-    if (task.status === "Blocked") {
-      const autoBlock = await prisma.auditLog.findFirst({
+    // 无延迟卡脖子物料 → 恢复被自动 Block 的任务；状态与审计必须原子提交。
+    for (const task of assemblyTasks) {
+      if (task.status !== "Blocked") continue;
+      const autoBlock = await tx.auditLog.findFirst({
         where: { entityType: "TASK", entityId: task.id, action: "AUTO_BLOCK" },
         orderBy: { createdAt: "desc" },
       });
-      const manualAfter = await prisma.auditLog.findFirst({
+      const manualAfter = await tx.auditLog.findFirst({
         where: { entityType: "TASK", entityId: task.id, action: { not: "AUTO_BLOCK" }, createdAt: { gt: autoBlock?.createdAt ?? new Date(0) } },
       });
       if (autoBlock && !manualAfter) {
         const from = (JSON.parse(autoBlock.diffJson ?? "{}") as { from?: string }).from ?? "To Do";
-        await prisma.task.update({ where: { id: task.id }, data: { status: from } });
-        await writeAudit({ userId, action: "AUTO_UNBLOCK", entityType: "TASK", entityId: task.id, diff: { from: "Blocked", to: from } });
+        await tx.task.update({ where: { id: task.id }, data: { status: from } });
+        await writeAudit({ userId, action: "AUTO_UNBLOCK", entityType: "TASK", entityId: task.id, diff: { from: "Blocked", to: from } }, tx);
       }
     }
-  }
-  return { blocked: 0, delayed: [] };
+    return { blocked: 0, delayed: [] };
+  });
 }
 
 export async function createBomItem(userId: string, data: Record<string, unknown>) {
@@ -150,9 +160,11 @@ export async function updateBomItem(userId: string, id: string, data: Record<str
   await writeAudit({ userId, action: "UPDATE", entityType: "BOM_ITEM", entityId: id, diff: { before: { status: before.status }, after: patch } });
   await indexEntity({ entityType: "BOM_ITEM", entityId: item.id, projectId: item.projectId, title: `${item.mpn} ${item.name}`, body: item.spec });
 
-  const blockResult = "status" in patch || before.status !== item.status
-    ? await syncAssemblyBlock(userId, item.projectId, item.phaseId)
-    : null;
+  const affectsBlocking = ["status", "isCritical", "phaseId"].some((field) => field in patch);
+  const blockResult = affectsBlocking ? await syncAssemblyBlock(userId, item.projectId, item.phaseId) : null;
+  if (affectsBlocking && before.phaseId !== item.phaseId) {
+    await syncAssemblyBlock(userId, before.projectId, before.phaseId);
+  }
   const kitRate = await getKitRate(item.projectId, item.phaseId);
   return { item, kitRate, blockResult };
 }
@@ -163,6 +175,7 @@ export async function deleteBomItem(userId: string, id: string) {
   await prisma.bomItem.delete({ where: { id } });
   await writeAudit({ userId, action: "DELETE", entityType: "BOM_ITEM", entityId: id, diff: { mpn: before.mpn } });
   await removeFromIndex("BOM_ITEM", id);
+  await syncAssemblyBlock(userId, before.projectId, before.phaseId);
   return getKitRate(before.projectId, before.phaseId);
 }
 

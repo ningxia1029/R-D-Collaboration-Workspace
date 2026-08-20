@@ -11,6 +11,8 @@ const DEMO_ACCOUNTS = [
   { email: "eng@demo.com", label: "研发工程师" },
   { email: "guest@demo.com", label: "访客" },
 ];
+const DEMO_PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? "";
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true" && DEMO_PASSWORD.length >= 12;
 
 function LoginForm() {
   const router = useRouter();
@@ -53,7 +55,11 @@ function LoginForm() {
           PLM · 项目管理 · 工程知识库 一体化
         </Typography.Paragraph>
         {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} />}
-        <Form layout="vertical" onFinish={onFinish} initialValues={{ email: "admin@demo.com", password: "Demo@123456" }}>
+        <Form
+          layout="vertical"
+          onFinish={onFinish}
+          initialValues={DEMO_MODE ? { email: "admin@demo.com", password: DEMO_PASSWORD } : undefined}
+        >
           <Form.Item name="email" label="邮箱" rules={[{ required: true, message: "请输入邮箱" }]}>
             <Input size="large" placeholder="email@example.com" autoComplete="username" />
           </Form.Item>
@@ -64,17 +70,21 @@ function LoginForm() {
             登 录
           </Button>
         </Form>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 8, fontSize: 12 }}>
-          演示账号（密码均为 Demo@123456）：
-        </Typography.Paragraph>
-        <Space wrap size={[4, 4]}>
-          {DEMO_ACCOUNTS.map((a) => (
-            <Tag key={a.email} style={{ cursor: "pointer" }}
-              onClick={() => onFinish({ email: a.email, password: "Demo@123456" })}>
-              {a.label} {a.email}
-            </Tag>
-          ))}
-        </Space>
+        {DEMO_MODE && (
+          <>
+            <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 8, fontSize: 12 }}>
+              演示账号（仅限隔离验收环境）：
+            </Typography.Paragraph>
+            <Space wrap size={[4, 4]}>
+              {DEMO_ACCOUNTS.map((a) => (
+                <Tag key={a.email} style={{ cursor: "pointer" }}
+                  onClick={() => onFinish({ email: a.email, password: DEMO_PASSWORD })}>
+                  {a.label} {a.email}
+                </Tag>
+              ))}
+            </Space>
+          </>
+        )}
       </Card>
     </div>
   );

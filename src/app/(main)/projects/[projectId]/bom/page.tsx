@@ -39,6 +39,12 @@ export default function BomPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { project } = useProject();
   const { message } = App.useApp();
+  const permissions = project?.currentUserAccess.permissions ?? [];
+  const canCreate = permissions.includes("bom:create");
+  const canUpdate = permissions.includes("bom:update");
+  const canDelete = permissions.includes("bom:delete");
+  const canImport = permissions.includes("bom:import");
+  const canExport = permissions.includes("bom:export");
   const [phaseId, setPhaseId] = useState<string | null>(null);
   const [items, setItems] = useState<BomItem[]>([]);
   const [kitRate, setKitRate] = useState<KitRate | null>(null);
@@ -82,7 +88,7 @@ export default function BomPage() {
   // Ctrl+N 新建物料
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
+      if (canCreate && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setEditing(null);
         form.resetFields();
@@ -91,7 +97,7 @@ export default function BomPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [form]);
+  }, [form, canCreate]);
 
   const saveItem = async () => {
     const values = await form.validateFields();
@@ -195,7 +201,7 @@ export default function BomPage() {
         title="物料清单"
         extra={
           <Space>
-            {selectedKeys.length > 0 && (
+            {canUpdate && selectedKeys.length > 0 && (
               <Select
                 placeholder={`批量改状态 (${selectedKeys.length})`}
                 style={{ width: 180 }}
@@ -203,11 +209,13 @@ export default function BomPage() {
                 options={BOM_STATUSES.map((s) => ({ value: s, label: `→ ${STATUS_SHORT[s].label}` }))}
               />
             )}
-            <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入</Button>
-            <Button icon={<DownloadOutlined />} href={`/api/bom/export?projectId=${projectId}${phaseId ? `&phaseId=${phaseId}` : ""}`}>导出</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setFormOpen(true); }}>
-              新建物料
-            </Button>
+            {canImport && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>导入</Button>}
+            {canExport && <Button icon={<DownloadOutlined />} href={`/api/bom/export?projectId=${projectId}${phaseId ? `&phaseId=${phaseId}` : ""}`}>导出</Button>}
+            {canCreate && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setFormOpen(true); }}>
+                新建物料
+              </Button>
+            )}
           </Space>
         }
       >
@@ -217,7 +225,7 @@ export default function BomPage() {
           loading={loading}
           dataSource={items}
           pagination={false}
-          rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+          rowSelection={canUpdate ? { selectedRowKeys: selectedKeys, onChange: setSelectedKeys } : undefined}
           columns={[
             {
               title: "MPN", dataIndex: "mpn", width: 170,
@@ -247,6 +255,7 @@ export default function BomPage() {
                   value={v}
                   style={{ width: 110 }}
                   variant="borderless"
+                  disabled={!canUpdate}
                   onChange={(nv) => quickStatus(r.id, nv)}
                   options={BOM_STATUSES.map((s) => ({ value: s, label: STATUS_SHORT[s].label }))}
                 />
@@ -269,26 +278,26 @@ export default function BomPage() {
               title: "ECO", width: 110,
               render: (_, r) => (r.eco ? <Tag color="red">{r.eco.ecoNumber}</Tag> : "—"),
             },
-            {
+            ...((canUpdate || canDelete) ? [{
               title: "操作", width: 130,
-              render: (_, r) => (
+              render: (_: unknown, r: BomItem) => (
                 <Space size={0}>
-                  <Button size="small" type="link" onClick={() => {
+                  {canUpdate && <Button size="small" type="link" onClick={() => {
                     setEditing(r);
                     form.setFieldsValue({ ...r, eta: r.eta ? dayjs(r.eta) : null });
                     setFormOpen(true);
-                  }}>编辑</Button>
-                  <Button size="small" type="link" onClick={() => {
+                  }}>编辑</Button>}
+                  {canCreate && <Button size="small" type="link" onClick={() => {
                     form.setFieldsValue({ ...r, mpn: r.mpn + "-COPY", eta: r.eta ? dayjs(r.eta) : null });
                     setEditing(null);
                     setFormOpen(true);
-                  }}>复制</Button>
-                  <Popconfirm title="删除该物料？" onConfirm={() => remove(r.id)}>
+                  }}>复制</Button>}
+                  {canDelete && <Popconfirm title="删除该物料？" onConfirm={() => remove(r.id)}>
                     <Button size="small" type="link" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
+                  </Popconfirm>}
                 </Space>
               ),
-            },
+            }] : []),
           ]}
         />
       </Card>

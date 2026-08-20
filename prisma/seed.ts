@@ -7,12 +7,42 @@ import {
   type PermissionCode,
 } from "../src/lib/constants";
 import { reindexAll } from "../src/lib/services/searchService";
+import { validatePassword } from "../src/lib/passwordPolicy";
 
+function validateSeedEnvironment() {
+  if (process.env.NODE_ENV === "production") throw new Error("拒绝 seed：生产环境禁止执行演示数据种子");
+  if (process.env.DEMO_SEED_ALLOW !== "1") throw new Error("拒绝 seed：必须显式设置 DEMO_SEED_ALLOW=1");
+
+  let databaseName = "";
+  try {
+    const databaseUrl = new URL(process.env.DATABASE_URL ?? "");
+    if (!["postgres:", "postgresql:"].includes(databaseUrl.protocol)) throw new Error("unsupported protocol");
+    databaseName = decodeURIComponent(databaseUrl.pathname.replace(/^\//, ""));
+  } catch {
+    throw new Error("拒绝 seed：DATABASE_URL 必须是有效的 PostgreSQL URL");
+  }
+  if (!databaseName || !/(?:^|_)(?:demo|uat|test|ci)(?:_|$)/i.test(databaseName)) {
+    throw new Error("拒绝 seed：目标数据库名必须包含 demo、uat、test 或 ci");
+  }
+  if (process.env.DEMO_SEED_TARGET_ACK !== databaseName) {
+    throw new Error("拒绝 seed：DEMO_SEED_TARGET_ACK 必须精确等于目标数据库名");
+  }
+
+  const password = process.env.DEMO_SEED_PASSWORD ?? "";
+  const passwordResult = validatePassword(password);
+  if (!passwordResult.valid) {
+    throw new Error(`拒绝 seed：DEMO_SEED_PASSWORD 不符合强密码策略（${passwordResult.errors.join("；")}）`);
+  }
+  return { databaseName, password };
+}
+
+const seedConfig = validateSeedEnvironment();
 const prisma = new PrismaClient();
 
 const daysFromNow = (d: number) => new Date(Date.now() + d * 86400000);
 
 async function main() {
+  console.log(`[seed] target=${seedConfig.databaseName} acknowledged=true`);
   console.log("== 清理旧数据 ==");
   await prisma.$transaction([
     prisma.auditLog.deleteMany(),
@@ -72,18 +102,18 @@ async function main() {
   }
 
   console.log("== 用户 ==");
-  const passwordHash = await bcrypt.hash("Demo@123456", 10);
+  const passwordHash = await bcrypt.hash(seedConfig.password, 10);
   const admin = await prisma.user.create({
-    data: { email: "admin@demo.com", name: "系统管理员", passwordHash, roleId: roles.admin },
+    data: { email: "admin@demo.com", name: "系统管理员", passwordHash, roleId: roles.admin, mustChangePassword: false },
   });
   const pm = await prisma.user.create({
-    data: { email: "pm@demo.com", name: "张工(项目经理)", passwordHash, roleId: roles.pm },
+    data: { email: "pm@demo.com", name: "张工(项目经理)", passwordHash, roleId: roles.pm, mustChangePassword: false },
   });
   const eng = await prisma.user.create({
-    data: { email: "eng@demo.com", name: "李工(硬件工程师)", passwordHash, roleId: roles.engineer },
+    data: { email: "eng@demo.com", name: "李工(硬件工程师)", passwordHash, roleId: roles.engineer, mustChangePassword: false },
   });
   const guest = await prisma.user.create({
-    data: { email: "guest@demo.com", name: "访客", passwordHash, roleId: roles.viewer },
+    data: { email: "guest@demo.com", name: "访客", passwordHash, roleId: roles.viewer, mustChangePassword: false },
   });
 
   console.log("== 物料库 ==");
@@ -473,7 +503,7 @@ async function main() {
   await reindexAll();
 
   console.log("✅ Seed 完成");
-  console.log("   账号: admin@demo.com / pm@demo.com / eng@demo.com / guest@demo.com  密码: Demo@123456");
+  console.log("   账号: admin@demo.com / pm@demo.com / eng@demo.com / guest@demo.com（密码由 DEMO_SEED_PASSWORD 注入）");
 }
 
 main()

@@ -15,6 +15,9 @@ interface Props {
   onRowClick: (task: TaskItem) => void;
   onChanged: () => void;
   projectId: string;
+  canEditTask: (task: TaskItem) => boolean;
+  canBatchEdit: boolean;
+  canAssign: boolean;
 }
 
 /** 双击进入行内编辑的单元格 */
@@ -22,10 +25,12 @@ function EditableCell({
   value,
   onSave,
   editor,
+  editable,
 }: {
   value: React.ReactNode;
   onSave: (v: unknown) => Promise<void>;
   editor: (commit: (v: unknown) => void, cancel: () => void) => React.ReactNode;
+  editable: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const commit = async (v: unknown) => {
@@ -33,13 +38,13 @@ function EditableCell({
     await onSave(v);
   };
   return (
-    <div className="inline-edit-cell" onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}>
+    <div className="inline-edit-cell" onDoubleClick={(e) => { if (editable) { e.stopPropagation(); setEditing(true); } }}>
       {editing ? editor(commit, () => setEditing(false)) : value ?? "—"}
     </div>
   );
 }
 
-export default function TaskTable({ tasks, phases, onRowClick, onChanged, projectId }: Props) {
+export default function TaskTable({ tasks, phases, onRowClick, onChanged, projectId, canEditTask, canBatchEdit, canAssign }: Props) {
   const { message } = App.useApp();
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [filters, setFilters] = useState<{ status?: string; priority?: string; phaseId?: string }>({});
@@ -47,9 +52,11 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
 
   useEffect(() => {
     import("@/lib/api-client").then(({ get }) =>
-      get<{ id: string; name: string }[]>("/api/users").then(setUsers).catch(() => undefined)
+      get<{ user: { id: string; name: string; status: string } }[]>(`/api/projects/${projectId}/members`)
+        .then((members) => setUsers(members.filter((member) => member.user.status === "active").map((member) => member.user)))
+        .catch(() => undefined)
     );
-  }, []);
+  }, [projectId]);
 
   // Space 快捷键：切换勾选聚焦行
   useEffect(() => {
@@ -106,7 +113,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
         <Select allowClear placeholder="试制阶段" style={{ width: 140 }}
           options={phases.map((p) => ({ value: p.id, label: p.phaseName }))}
           onChange={(v) => setFilters((f) => ({ ...f, phaseId: v }))} />
-        {selectedKeys.length > 0 && (
+        {canBatchEdit && selectedKeys.length > 0 && (
           <Dropdown
             menu={{
               items: [
@@ -130,7 +137,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
         size="small"
         dataSource={filtered}
         pagination={false}
-        rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
+        rowSelection={canBatchEdit ? { selectedRowKeys: selectedKeys, onChange: setSelectedKeys } : undefined}
         onRow={(record) => ({ onClick: () => onRowClick(record), tabIndex: 0 })}
         columns={[
           {
@@ -139,7 +146,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
               <Space size={4}>
                 {r.parentId && <Tag style={{ marginRight: 0 }}>子</Tag>}
                 {r.isMilestone && <Tag color="gold" style={{ marginRight: 0 }}>◆</Tag>}
-                <EditableCell value={v} onSave={(nv) => saveField(r.id, "title", nv)}
+                <EditableCell value={v} editable={canEditTask(r)} onSave={(nv) => saveField(r.id, "title", nv)}
                   editor={(commit, cancel) => (
                     <Input size="small" autoFocus defaultValue={v}
                       onBlur={cancel}
@@ -152,7 +159,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
             title: "状态", dataIndex: "status", width: 130,
             sorter: (a, b) => a.status.localeCompare(b.status),
             render: (v: string, r) => (
-              <EditableCell value={<StatusTag value={v} />} onSave={(nv) => saveField(r.id, "status", nv)}
+              <EditableCell value={<StatusTag value={v} />} editable={canEditTask(r)} onSave={(nv) => saveField(r.id, "status", nv)}
                 editor={(commit) => (
                   <Select size="small" autoFocus defaultOpen defaultValue={v} style={{ width: 120 }}
                     options={TASK_STATUSES.map((s) => ({ value: s, label: s }))}
@@ -164,7 +171,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
             title: "优先级", dataIndex: "priority", width: 90,
             sorter: (a, b) => a.priority.localeCompare(b.priority),
             render: (v: string, r) => (
-              <EditableCell value={<PriorityTag value={v} />} onSave={(nv) => saveField(r.id, "priority", nv)}
+              <EditableCell value={<PriorityTag value={v} />} editable={canEditTask(r)} onSave={(nv) => saveField(r.id, "priority", nv)}
                 editor={(commit) => (
                   <Select size="small" autoFocus defaultOpen defaultValue={v} style={{ width: 80 }}
                     options={PRIORITIES.map((p) => ({ value: p, label: p }))}
@@ -175,7 +182,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
           {
             title: "负责人", dataIndex: ["assignee", "name"], width: 110,
             render: (v: string, r) => (
-              <EditableCell value={v} onSave={(nv) => saveField(r.id, "assigneeId", nv)}
+              <EditableCell value={v} editable={canEditTask(r) && canAssign} onSave={(nv) => saveField(r.id, "assigneeId", nv)}
                 editor={(commit) => (
                   <Select size="small" autoFocus defaultOpen defaultValue={r.assigneeId} allowClear style={{ width: 130 }}
                     options={users.map((u) => ({ value: u.id, label: u.name }))}
@@ -186,7 +193,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
           {
             title: "阶段", dataIndex: ["phase", "phaseName"], width: 110,
             render: (v: string, r) => (
-              <EditableCell value={v ? <Tag color="purple">{v}</Tag> : "—"} onSave={(nv) => saveField(r.id, "phaseId", nv)}
+              <EditableCell value={v ? <Tag color="purple">{v}</Tag> : "—"} editable={canEditTask(r)} onSave={(nv) => saveField(r.id, "phaseId", nv)}
                 editor={(commit) => (
                   <Select size="small" autoFocus defaultOpen defaultValue={r.phaseId} allowClear style={{ width: 120 }}
                     options={phases.map((p) => ({ value: p.id, label: p.phaseName }))}
@@ -201,6 +208,7 @@ export default function TaskTable({ tasks, phases, onRowClick, onChanged, projec
               const overdue = v && r.status !== "Done" && dayjs(v).isBefore(dayjs(), "day");
               return (
                 <EditableCell
+                  editable={canEditTask(r)}
                   value={v ? <span className={overdue ? "eta-overdue" : undefined}>{dayjs(v).format("YYYY-MM-DD")}</span> : "—"}
                   onSave={(nv) => saveField(r.id, "dueDate", nv)}
                   editor={(commit) => (

@@ -6,7 +6,6 @@ import { EditOutlined, HistoryOutlined, DeleteOutlined, SaveOutlined } from "@an
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import dayjs from "dayjs";
-import { useSession } from "next-auth/react";
 import { get, patch, del } from "@/lib/api-client";
 import Markdown from "@/components/common/Markdown";
 import CommentsSection from "@/components/common/CommentsSection";
@@ -25,16 +24,13 @@ interface Doc {
   creator?: { name: string } | null;
   tags: { tag: { id: string; name: string } }[];
   versions: DocVersion[];
+  currentUserAccess: { role: string; permissions: string[] };
 }
 
 export default function DocumentPage() {
   const { docId } = useParams<{ docId: string }>();
   const router = useRouter();
   const { message } = App.useApp();
-  const { data: session } = useSession();
-  const canWrite = ["admin", "pm", "engineer"].includes(session?.user?.roleName ?? "");
-  const isAdmin = session?.user?.roleName === "admin";
-
   const [doc, setDoc] = useState<Doc | null>(null);
   const [editing, setEditing] = useState(false);
   const [mdValue, setMdValue] = useState("");
@@ -82,6 +78,9 @@ export default function DocumentPage() {
 
   if (!doc) return null;
   const latest = doc.versions[0];
+  const canWrite = doc.currentUserAccess.permissions.includes("kb:update");
+  const canDelete = doc.currentUserAccess.permissions.includes("kb:delete");
+  const canComment = doc.currentUserAccess.role !== "viewer";
 
   return (
     <Card
@@ -110,7 +109,7 @@ export default function DocumentPage() {
               <Button type="primary" icon={<SaveOutlined />} onClick={save}>保存</Button>
             </>
           )}
-          {isAdmin && (
+          {canDelete && (
             <Popconfirm title="删除该文档（含全部版本）？" onConfirm={remove}>
               <Button danger icon={<DeleteOutlined />} />
             </Popconfirm>
@@ -150,7 +149,7 @@ export default function DocumentPage() {
 
       {!editing && (
         <Card size="small" title="讨论" style={{ marginTop: 16 }}>
-          <CommentsSection entityType="DOCUMENT" entityId={doc.id} />
+          <CommentsSection entityType="DOCUMENT" entityId={doc.id} readOnly={!canComment} />
         </Card>
       )}
 
