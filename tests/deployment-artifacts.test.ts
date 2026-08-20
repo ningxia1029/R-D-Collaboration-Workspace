@@ -5,8 +5,17 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
+function normalizeText(text: string) {
+  return text.replace(/\r\n/g, "\n");
+}
+
+function readText(filePath: string) {
+  return normalizeText(fs.readFileSync(filePath, "utf8"));
+}
+
 function composeServiceBlock(compose: string, service: string) {
-  const match = compose.match(new RegExp(`^  ${service}:\\n([\\s\\S]*?)(?=^  [A-Za-z][A-Za-z0-9_-]*:\\n|^volumes:|^networks:|(?![\\s\\S]))`, "m"));
+  const normalizedCompose = normalizeText(compose);
+  const match = normalizedCompose.match(new RegExp(`^  ${service}:\\n([\\s\\S]*?)(?=^  [A-Za-z][A-Za-z0-9_-]*:\\n|^volumes:|^networks:|(?![\\s\\S]))`, "m"));
   assert.ok(match, `缺少 ${service} 服务`);
   return match[1];
 }
@@ -29,7 +38,7 @@ function validateSelfhostEnv(overrides: Record<string, string>) {
 }
 
 test("容器运行层使用非 root standalone 且以 ready 探针接流", () => {
-  const dockerfile = fs.readFileSync("Dockerfile", "utf8");
+  const dockerfile = readText("Dockerfile");
   assert.match(dockerfile, /FROM node:24\.12\.0-bookworm-slim AS runner/);
   assert.match(dockerfile, /USER nextjs/);
   assert.match(dockerfile, /install -y --no-install-recommends ca-certificates openssl/);
@@ -40,7 +49,7 @@ test("容器运行层使用非 root standalone 且以 ready 探针接流", () =>
 });
 
 test("UAT 编排固定使用 PostgreSQL 16 和隔离数据库名", () => {
-  const compose = fs.readFileSync("docker-compose.uat.yml", "utf8");
+  const compose = readText("docker-compose.uat.yml");
   assert.match(compose, /image: postgres:16/);
   assert.match(compose, /POSTGRES_DB: workbuddy_uat/);
   assert.match(compose, /UAT_POSTGRES_PASSWORD:\?/);
@@ -51,7 +60,7 @@ test("UAT 编排固定使用 PostgreSQL 16 和隔离数据库名", () => {
 });
 
 test("生产环境模板不包含演示模式或可用秘密值", () => {
-  const example = fs.readFileSync(".env.production.example", "utf8");
+  const example = readText(".env.production.example");
   assert.match(example, /NEXT_PUBLIC_DEMO_MODE=false/);
   assert.match(example, /DEPLOYMENT_ENV=production/);
   assert.match(example, /AUTH_RATE_LIMIT_MODE=gateway/);
@@ -61,14 +70,14 @@ test("生产环境模板不包含演示模式或可用秘密值", () => {
 });
 
 test("UAT seed 脚本具有数据库名和人工确认双门禁", () => {
-  const script = fs.readFileSync("scripts/seed-uat.ts", "utf8");
+  const script = readText("scripts/seed-uat.ts");
   assert.match(script, /expectedDatabase = "workbuddy_uat"/);
   assert.match(script, /UAT_SEED_TARGET_ACK/);
   assert.match(script, /actualDatabase !== expectedDatabase \|\| targetAck !== expectedDatabase/);
 });
 
 test("UAT 环境预检拒绝需要 URL 编码的数据库密码和公开占位密钥", () => {
-  const script = fs.readFileSync("scripts/validate-uat-env.ts", "utf8");
+  const script = readText("scripts/validate-uat-env.ts");
   assert.match(script, /^export \{\};$/m);
   assert.match(script, /\^\[A-Za-z0-9\._~-\]\+\$/);
   assert.match(script, /postgresPassword\.length < 24/);
@@ -77,11 +86,11 @@ test("UAT 环境预检拒绝需要 URL 编码的数据库密码和公开占位�
 });
 
 test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
-  const compose = fs.readFileSync("docker-compose.selfhost.yml", "utf8");
-  const example = fs.readFileSync(".env.selfhost.example", "utf8");
-  const generator = fs.readFileSync("scripts/new-selfhost-env.ps1", "utf8");
-  const validator = fs.readFileSync("scripts/validate-selfhost-env.ts", "utf8");
-  const composeWrapper = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
+  const compose = readText("docker-compose.selfhost.yml");
+  const example = readText(".env.selfhost.example");
+  const generator = readText("scripts/new-selfhost-env.ps1");
+  const validator = readText("scripts/validate-selfhost-env.ts");
+  const composeWrapper = readText("scripts/selfhost-compose.ps1");
 
   assert.match(compose, /^name: workbuddy-selfhost$/m);
   const preflight = composeServiceBlock(compose, "preflight");
@@ -90,6 +99,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   const seed = composeServiceBlock(compose, "seed");
   const app = composeServiceBlock(compose, "app");
   const tunnel = composeServiceBlock(compose, "tunnel");
+  assert.equal(composeServiceBlock(compose.replace(/\r?\n/g, "\r\n"), "preflight"), preflight, "Compose 服务块解析必须兼容 Windows CRLF checkout");
 
   assert.match(db, /image: postgres:16/);
   assert.match(db, /POSTGRES_DB: workbuddy_selfhost_uat/);
@@ -139,7 +149,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
     assert.match(example, new RegExp(`^${key}=$`, "m"));
   }
   assert.match(example, /不要复制；运行 scripts\/new-selfhost-env\.ps1 生成真实文件/);
-  const gitignore = fs.readFileSync(".gitignore", "utf8");
+  const gitignore = readText(".gitignore");
   assert.match(gitignore, /^\.env\.selfhost$/m);
   assert.match(gitignore, /^backups\/$/m);
   assert.doesNotMatch(gitignore, /^!\.env\.selfhost\.example$/m);
@@ -208,6 +218,7 @@ test("自托管预检只拒绝完整公开占位词及其数字或分隔符后�
 });
 
 test("生成器在 Windows PowerShell 5.1 中不传 OutputPath 时使用脚本父目录", () => {
+  if (process.platform !== "win32") return;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workbuddy-selfhost-default-"));
   const scriptsDir = path.join(root, "scripts");
   const copiedScript = path.join(scriptsDir, "new-selfhost-env.ps1");
@@ -220,39 +231,41 @@ test("生成器在 Windows PowerShell 5.1 中不传 OutputPath 时使用脚本�
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), expectedEnv);
     assert.ok(fs.existsSync(expectedEnv));
+    assert.equal(fs.realpathSync.native(result.stdout.trim()), fs.realpathSync.native(expectedEnv));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("自托管 Compose wrapper 将裸 -d 重构为 up 后的 --detach", () => {
+  const source = readText("scripts/selfhost-compose.ps1");
+  assert.match(source, /\[Alias\('d'\)\]\[switch\]\$Detach/);
+  assert.match(source, /Normalize-ComposeArguments -ComposeArguments \$ComposeArgs -Detach:\$Detach/);
+  const docs = `${readText("docs/SELF_HOSTED_UAT.md")}\n${readText("docs/superpowers/plans/2026-08-20-self-hosted-uat.md")}`;
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-d\b/);
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-e\b/, "PowerShell 会把 Compose 的 -e 误解析为公共参数缩写；必须使用 --env/--eval");
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-[a-zA-Z](?=\s|$)/, "wrapper 后不得使用会被 PowerShell 误绑定的单字母短参数");
+  if (process.platform !== "win32") return;
+
   const wrapper = path.resolve("scripts/selfhost-compose.ps1").replace(/'/g, "''");
   const command = `& { . '${wrapper}'; (Normalize-ComposeArguments -ComposeArguments @('up', '--build', 'db', 'migrate', 'app') -Detach) -join ' ' }`;
   const result = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-Command", command], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "up --detach --build db migrate app");
-  const source = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
-  assert.match(source, /\[Alias\('d'\)\]\[switch\]\$Detach/);
-  assert.match(source, /Normalize-ComposeArguments -ComposeArguments \$ComposeArgs -Detach:\$Detach/);
   for (const args of ["@('ps')", "@('up', '--detach')"]) {
     const invalid = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-Command", `& { . '${wrapper}'; Normalize-ComposeArguments -ComposeArguments ${args} -Detach }`], { encoding: "utf8" });
     assert.notEqual(invalid.status, 0);
   }
-  const docs = `${fs.readFileSync("docs/SELF_HOSTED_UAT.md", "utf8")}\n${fs.readFileSync("docs/superpowers/plans/2026-08-20-self-hosted-uat.md", "utf8")}`;
-  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-d\b/);
-  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-e\b/, "PowerShell 会把 Compose 的 -e 误解析为公共参数缩写；必须使用 --env/--eval");
-  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-[a-zA-Z](?=\s|$)/, "wrapper 后不得使用会被 PowerShell 误绑定的单字母短参数");
 });
 
 test("自托管备份、恢复和运行手册维持可审计且默认无写入的数据库运维边界", () => {
-  const compose = fs.readFileSync("docker-compose.selfhost.yml", "utf8");
-  const backup = fs.readFileSync("scripts/selfhost-backup.sh", "utf8");
-  const restore = fs.readFileSync("scripts/selfhost-restore.sh", "utf8");
-  const handbook = fs.readFileSync("docs/SELF_HOSTED_UAT.md", "utf8");
-  const attributes = fs.readFileSync(".gitattributes", "utf8");
-  const composeWrapper = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
+  const compose = readText("docker-compose.selfhost.yml");
+  const backup = readText("scripts/selfhost-backup.sh");
+  const restore = readText("scripts/selfhost-restore.sh");
+  const handbook = readText("docs/SELF_HOSTED_UAT.md");
+  const attributes = readText(".gitattributes");
+  const composeWrapper = readText("scripts/selfhost-compose.ps1");
 
   assert.match(backup, /^#!\/bin\/sh\nset -eu\numask 077/m);
   assert.match(backup, /SELFHOST_BACKUP_INTERVAL_SECONDS/);
@@ -330,7 +343,7 @@ test("自托管备份、恢复和运行手册维持可审计且默认无写入�
   assert.match(restoreService, /cap_drop:|<<: \*restricted-security/);
 
   assert.match(attributes, /^\*\.sh text eol=lf$/m);
-  const gitignore = fs.readFileSync(".gitignore", "utf8");
+  const gitignore = readText(".gitignore");
   assert.match(gitignore, /^backups\/$/m);
   for (const phrase of ["down -v", "RESTORE_EXECUTE=1", "RESTORE_TARGET_ACK=workbuddy_selfhost_uat", "http://app:3000", "Cloudflare", "live", "ready"]) {
     assert.match(handbook, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
@@ -366,7 +379,7 @@ test("自托管备份、恢复和运行手册维持可审计且默认无写入�
 });
 
 test("Render Singapore UAT Blueprint 固定 PG16、迁移、健康检查和秘密边界", () => {
-  const blueprint = fs.readFileSync("render.yaml", "utf8");
+  const blueprint = readText("render.yaml");
 
   assert.match(blueprint, /runtime: node/);
   assert.equal(blueprint.match(/region: singapore/g)?.length, 2);
