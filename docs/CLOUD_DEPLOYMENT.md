@@ -60,6 +60,27 @@ docker compose -f docker-compose.uat.yml --profile demo-seed run --rm seed
 
 本机 Playwright 可通过 `127.0.0.1:${UAT_DB_PORT:-55432}` 访问该隔离库。停止服务不会自动删除数据卷；删除验收卷属于破坏性操作，必须先核对项目名和卷名。
 
+## Render Singapore 内部 UAT（推荐）
+
+根目录 `render.yaml` 用一个 Blueprint 创建以下资源：
+
+- Singapore 区域的 Starter Web Service：`workbuddy-plm-uat`；
+- 同区域 PostgreSQL 16：`workbuddy-plm-uat-db`，Basic 256 MB、5 GB 磁盘且禁止公网数据库访问；
+- 每次部署先执行 `prisma migrate deploy`，ready 探针通过后才接流；
+- 仅第一次成功部署执行受保护的 demo seed，后续部署不会重复清库。
+
+首次部署步骤：
+
+1. 在 Render 选择 **New > Blueprint**，连接 GitHub 仓库的 `main` 分支并读取 `render.yaml`。
+2. 创建前只需填写 `DEMO_SEED_PASSWORD`：使用独立强密码，不得复用个人或生产密码。`AUTH_SECRET` 由 Render 自动生成，`DATABASE_URL` 由数据库资源注入。
+3. 暂不绑定正式域名，内部测试直接使用 Render 分配的 `*.onrender.com` HTTPS 地址。
+4. 首次部署完成后访问 `/api/health/live` 和 `/api/health/ready`，二者都应返回成功。
+5. 使用 `admin@demo.com` 和第 2 步的密码首次登录，由管理员创建内部测试人员账号，再按验收清单检查 admin、pm、engineer、viewer 权限。
+
+该环境明确标记为 `DEPLOYMENT_ENV=uat`，没有宣称生产网关限流能力。数据库是可丢弃的内部测试库；录入有效测试数据后，不得手工重跑 `npm run db:seed`，因为 seed 会清空 UAT 业务表。Agent 默认保持关闭，Blueprint 不接收模型密钥。
+
+Render 回滚应用时选择上一成功部署；数据库迁移仍遵循 expand/contract，不用回滚应用代替数据库恢复。正式生产部署需另建数据库、域名、网关限流和备份/PITR 策略，不能直接把该 UAT Blueprint 改名复用。
+
 ## 发布与回滚
 
 1. 备份生产数据库并保存 SHA-256 与抽样摘要。
