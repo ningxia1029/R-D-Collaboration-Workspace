@@ -17,6 +17,7 @@
 - Create: `.env.selfhost.example`
 - Create: `scripts/new-selfhost-env.ps1`
 - Create: `scripts/validate-selfhost-env.ts`
+- Create: `scripts/selfhost-compose.ps1`
 - Modify: `.gitignore`
 - Modify: `tests/deployment-artifacts.test.ts`
 
@@ -98,20 +99,37 @@ volumes:
   workbuddy_selfhost_pgdata:
 ```
 
-在实际文件中补齐 healthcheck、`depends_on`、`no-new-privileges`、capability drop 和有界日志配置。`.env.selfhost.example` 只包含空 Secret 与非敏感默认值。`new-selfhost-env.ps1` 使用 `RandomNumberGenerator` 生成 URL-safe PostgreSQL 密码、至少 32 字节 Auth Secret 和符合共享密码策略的 demo 密码，以无 BOM UTF-8 原子写入 `.env.selfhost`，存在时默认拒绝覆盖且不输出 Secret。`validate-selfhost-env.ts` 在任何容器写操作前 fail closed。
+在实际文件中补齐 healthcheck、`depends_on`、`no-new-privileges`、capability drop 和有界日志配置。`.env.selfhost.example` 仅作变量清单，禁止复制；必须运行 `new-selfhost-env.ps1` 生成真实文件。生成器使用 `RandomNumberGenerator` 生成 URL-safe PostgreSQL 密码、至少 32 字节 Auth Secret 和符合共享密码策略的 demo 密码，以无 BOM UTF-8 原子写入 `.env.selfhost`，存在时默认拒绝覆盖且不输出 Secret。`selfhost-compose.ps1` 固定项目名并透传 Compose 参数。`validate-selfhost-env.ts` 在任何容器写操作前 fail closed。
 
 - [ ] **Step 4: 运行目标测试和 Compose 静态解析**
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
-Run: `docker compose --env-file .env.selfhost.example -f docker-compose.selfhost.yml config --quiet`
+Run:
 
-Expected: 契约测试全部通过；Compose 只因空 Secret 的预期插值策略保持可解析，不创建容器或卷。
+```powershell
+$envFile = Join-Path $env:TEMP ("workbuddy-selfhost-$([guid]::NewGuid().ToString('N')).env")
+$exitCode = 0
+try {
+  powershell -ExecutionPolicy Bypass -File scripts/new-selfhost-env.ps1 -OutputPath $envFile
+  if ($LASTEXITCODE -ne 0) {
+    $exitCode = $LASTEXITCODE
+  } else {
+    docker compose --project-name workbuddy-selfhost --env-file $envFile -f docker-compose.selfhost.yml config --quiet
+    $exitCode = $LASTEXITCODE
+  }
+} finally {
+  if (Test-Path -LiteralPath $envFile) { Remove-Item -LiteralPath $envFile -Force }
+}
+if ($exitCode -ne 0) { exit $exitCode }
+```
+
+Expected: 契约测试全部通过；Compose 使用临时生成的有效 env 静态解析，不创建容器或卷。
 
 - [ ] **Step 5: 显式暂存 Task 1 文件并提交**
 
 ```powershell
-git add -- docker-compose.selfhost.yml .env.selfhost.example scripts/new-selfhost-env.ps1 scripts/validate-selfhost-env.ts .gitignore tests/deployment-artifacts.test.ts docs/superpowers/plans/2026-08-20-self-hosted-uat.md
+git add -- docker-compose.selfhost.yml .env.selfhost.example scripts/new-selfhost-env.ps1 scripts/validate-selfhost-env.ts scripts/selfhost-compose.ps1 .gitignore tests/deployment-artifacts.test.ts docs/superpowers/plans/2026-08-20-self-hosted-uat.md
 git commit -m "deploy: add isolated self-hosted UAT stack"
 ```
 
@@ -173,17 +191,17 @@ Expected: `.env.selfhost` 存在且显示为 ignored；命令输出不包含任�
 
 - [ ] **Step 2: 确认精确目标后创建全新 Compose 资源**
 
-Run: `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml config --quiet`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 config --quiet`
 
-Run: `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml up --build -d db migrate app`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --build -d db migrate app`
 
 Expected: 只创建 `workbuddy-selfhost_*` 容器、网络与 `workbuddy-selfhost_workbuddy_selfhost_pgdata` 卷；既有 `cf-tunnel` 和 `workbuddy-uat_workbuddy_uat_pgdata` 保持原状态。
 
 - [ ] **Step 3: 执行一次性 seed 并启动备份**
 
-Run: `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml --profile demo-seed run --rm seed`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile demo-seed run --rm seed`
 
-Run: `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml up -d backup`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -d backup`
 
 Expected: seed 仅在明确 profile 下执行；备份目录生成非空 `.dump` 与匹配 `.sha256`。
 
@@ -193,7 +211,7 @@ Run: `Invoke-RestMethod http://127.0.0.1:3010/api/health/live`
 
 Run: `Invoke-RestMethod http://127.0.0.1:3010/api/health/ready`
 
-Run: `$backupName = (Get-ChildItem .\backups\selfhost\workbuddy-*.dump | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name; docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml --profile restore run --rm -e BACKUP_FILE=$backupName restore`
+Run: `$backupName = (Get-ChildItem .\backups\selfhost\workbuddy-*.dump | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name; powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile restore run --rm -e BACKUP_FILE=$backupName restore`
 
 Expected: live/ready 返回成功；恢复只列出归档、不执行写入；数据库没有宿主机端口；app 以非 root 运行。
 
@@ -201,7 +219,7 @@ Expected: live/ready 返回成功；恢复只列出归档、不执行写入；�
 
 用户在 Cloudflare 创建 `workbuddy-plm-uat` tunnel 和 published application route，hostname 使用用户确认的域名，Service URL 固定 `http://app:3000`；将独立 tunnel token 仅写入 `.env.selfhost`。建议在发布 route 前建立 Cloudflare Access Allow policy，否则公网将直接到达应用登录页。
 
-Run: `docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml --profile tunnel up -d tunnel`
+Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up -d tunnel`
 
 Expected: 新容器名属于 `workbuddy-selfhost`，Tunnel 为 healthy；既有 `cf-tunnel` 不重启、不重建。
 

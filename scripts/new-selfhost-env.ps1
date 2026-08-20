@@ -42,7 +42,11 @@ $tempPath = Join-Path $parent ("." + [System.IO.Path]::GetRandomFileName())
 $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
 try {
   [System.IO.File]::WriteAllText($tempPath, $content + [Environment]::NewLine, $utf8WithoutBom)
-  Move-Item -LiteralPath $tempPath -Destination $resolvedOutput -Force | Out-Null
+  if ($Force) {
+    Move-Item -LiteralPath $tempPath -Destination $resolvedOutput -Force | Out-Null
+  } else {
+    [System.IO.File]::Move($tempPath, $resolvedOutput)
+  }
 } finally {
   if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force }
 }

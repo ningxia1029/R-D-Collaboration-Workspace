@@ -15,10 +15,11 @@ function validateSelfhostEnv(overrides: Record<string, string>) {
     encoding: "utf8",
     env: {
       ...process.env,
-      SELFHOST_POSTGRES_PASSWORD: "postgres_" + "a".repeat(32),
-      SELFHOST_AUTH_SECRET: "auth_" + "b".repeat(40),
+      SELFHOST_POSTGRES_PASSWORD: "pg_A7mQ2xR9vK4nT8wZ5cL3hJ6sD1fG",
+      SELFHOST_AUTH_SECRET: "auth_B8qL3yN7rV2kP6mX9tC4wH1dF5sJ",
       SELFHOST_BACKUP_INTERVAL_SECONDS: "86400",
       SELFHOST_BACKUP_RETENTION_DAYS: "7",
+      SELFHOST_COMPOSE_PROJECT: "workbuddy-selfhost",
       CLOUDFLARE_TUNNEL_TOKEN: "",
       ...overrides,
     },
@@ -77,6 +78,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   const example = fs.readFileSync(".env.selfhost.example", "utf8");
   const generator = fs.readFileSync("scripts/new-selfhost-env.ps1", "utf8");
   const validator = fs.readFileSync("scripts/validate-selfhost-env.ts", "utf8");
+  const composeWrapper = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
 
   assert.match(compose, /^name: workbuddy-selfhost$/m);
   const preflight = composeServiceBlock(compose, "preflight");
@@ -104,6 +106,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   assert.match(seed, /DEMO_SEED_ALLOW: "1"/);
   assert.match(seed, /DEMO_SEED_TARGET_ACK: workbuddy_selfhost_uat/);
   assert.match(migrate, /preflight:\n        condition: service_completed_successfully/);
+  assert.match(preflight, /SELFHOST_COMPOSE_PROJECT: \$\{COMPOSE_PROJECT_NAME:-workbuddy-selfhost\}/);
 
   const appEnvironmentKeys = [...app.matchAll(/^      ([A-Z_]+):/gm)].map((match) => match[1]);
   assert.deepEqual(appEnvironmentKeys, ["DATABASE_URL", "AUTH_SECRET", "AUTH_TRUST_HOST", "NEXT_PUBLIC_DEMO_MODE", "DEPLOYMENT_ENV", "AUTH_RATE_LIMIT_MODE"]);
@@ -132,6 +135,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   for (const key of ["SELFHOST_POSTGRES_PASSWORD", "SELFHOST_AUTH_SECRET", "SELFHOST_DEMO_PASSWORD", "CLOUDFLARE_TUNNEL_TOKEN"]) {
     assert.match(example, new RegExp(`^${key}=$`, "m"));
   }
+  assert.match(example, /不要复制；运行 scripts\/new-selfhost-env\.ps1 生成真实文件/);
   const gitignore = fs.readFileSync(".gitignore", "utf8");
   assert.match(gitignore, /^\.env\.selfhost$/m);
   assert.match(gitignore, /^backups\/$/m);
@@ -145,8 +149,8 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   assert.match(generator, /TrimEnd\('='\)\.Replace\('\+', '-'\)\.Replace\('\/', '_'\)/);
   assert.match(generator, /\$tempPath = Join-Path \$parent/);
   assert.match(generator, /UTF8Encoding.*\$false/);
-  assert.match(generator, /-Force/);
-  assert.match(generator, /Move-Item[^\r\n]*\| Out-Null/);
+  assert.match(generator, /if \(\$Force\) \{[\s\S]*Move-Item[^\r\n]*-Force/);
+  assert.match(generator, /else \{[\s\S]*\[System\.IO\.File\]::Move\(\$tempPath, \$resolvedOutput\)/);
   assert.doesNotMatch(generator, /[^\x00-\x7F]/);
   assert.doesNotMatch(generator, /Write-Host.*\$(?:dbPassword|authSecret|demoPassword)/i);
   assert.doesNotMatch(generator, /Write-(?:Host|Output|Error).*SELFHOST_(?:POSTGRES_PASSWORD|AUTH_SECRET|DEMO_PASSWORD)/i);
@@ -163,19 +167,37 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   assert.match(validator, /if \(errors\.length > 0\) throw new Error/);
   assert.match(validator, /tunnelToken.*eyJ/i);
   assert.match(validator, /tunnelToken\.length < 80/);
+  assert.match(validator, /new Set\(postgresPassword\)\.size < 8/);
+  assert.match(validator, /new Set\(authSecret\)\.size < 8/);
+  assert.match(validator, /SELFHOST_COMPOSE_PROJECT/);
+  assert.match(validator, /composeProject !== "workbuddy-selfhost"/);
+  assert.match(composeWrapper, /--project-name "workbuddy-selfhost"/);
+  assert.match(composeWrapper, /--env-file \$envPath/);
+  assert.match(composeWrapper, /ValueFromRemainingArguments/);
+  assert.match(composeWrapper, /COMPOSE_PROJECT_NAME/);
+  assert.doesNotMatch(composeWrapper, /Write-(?:Host|Output|Error).*SELFHOST_/i);
   for (const source of [compose, example, generator, validator]) assert.doesNotMatch(source, /neon\.tech|Demo@123456|(?:sk|cf|eyJ)[A-Za-z0-9_-]{24,}/);
 });
 
 test("自托管预检只拒绝完整公开占位词及其数字或分隔符后缀", () => {
   const valid = validateSelfhostEnv({
-    SELFHOST_POSTGRES_PASSWORD: "democracy_" + "a".repeat(32),
-    SELFHOST_AUTH_SECRET: "yourself_" + "b".repeat(40),
+    SELFHOST_POSTGRES_PASSWORD: "democracy_A7mQ2xR9vK4nT8wZ5cL3hJ6sD1fG",
+    SELFHOST_AUTH_SECRET: "yourself_B8qL3yN7rV2kP6mX9tC4wH1dF5sJ",
   });
   assert.equal(valid.status, 0, valid.stderr);
 
   for (const value of ["changeme123", "replace-me-123", "your-secret-123", "demo-123"]) {
     const result = validateSelfhostEnv({ SELFHOST_POSTGRES_PASSWORD: value + "1".repeat(32) });
     assert.notEqual(result.status, 0, `${value} 必须被拒绝`);
+    assert.doesNotMatch(result.stdout + result.stderr, new RegExp(value));
+  }
+
+  for (const [key, value] of [
+    ["SELFHOST_POSTGRES_PASSWORD", "a".repeat(32)],
+    ["SELFHOST_AUTH_SECRET", "abcd".repeat(10)],
+  ] as const) {
+    const result = validateSelfhostEnv({ [key]: value });
+    assert.notEqual(result.status, 0, `${key} 的低多样性值必须被拒绝`);
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(value));
   }
 });

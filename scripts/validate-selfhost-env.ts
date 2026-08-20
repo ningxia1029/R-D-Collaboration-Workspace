@@ -1,6 +1,7 @@
 const postgresPassword = process.env.SELFHOST_POSTGRES_PASSWORD ?? "";
 const authSecret = process.env.SELFHOST_AUTH_SECRET ?? "";
 const tunnelToken = process.env.CLOUDFLARE_TUNNEL_TOKEN ?? "";
+const composeProject = process.env.SELFHOST_COMPOSE_PROJECT ?? "";
 const backupIntervalSeconds = Number(process.env.SELFHOST_BACKUP_INTERVAL_SECONDS ?? "86400");
 const backupRetentionDays = Number(process.env.SELFHOST_BACKUP_RETENTION_DAYS ?? "7");
 
@@ -9,16 +10,17 @@ const publicPlaceholderPattern = /^(?:(?:replace(?:_|-)?me|change(?:_|-)?me|chan
 const errors: string[] = [];
 
 // 密码会直接拼接到 DATABASE_URL，因而只能使用 RFC3986 unreserved 字符。
-if (postgresPassword.length < 24 || !urlSafePattern.test(postgresPassword)) {
+if (postgresPassword.length < 24 || !urlSafePattern.test(postgresPassword) || new Set(postgresPassword).size < 8) {
   errors.push("SELFHOST_POSTGRES_PASSWORD 必须至少 24 位，且只能包含 URL-safe 字符");
 }
-if (authSecret.length < 32 || !urlSafePattern.test(authSecret) || publicPlaceholderPattern.test(authSecret)) {
+if (authSecret.length < 32 || !urlSafePattern.test(authSecret) || new Set(authSecret).size < 8 || publicPlaceholderPattern.test(authSecret)) {
   errors.push("SELFHOST_AUTH_SECRET 必须是至少 32 位的非占位 URL-safe 随机值");
 }
 if (publicPlaceholderPattern.test(postgresPassword)) {
   errors.push("SELFHOST_POSTGRES_PASSWORD 不能使用公开占位值");
 }
 if (postgresPassword === authSecret) errors.push("数据库密码与 AUTH_SECRET 必须不同");
+if (composeProject !== "workbuddy-selfhost") errors.push("SELFHOST_COMPOSE_PROJECT 必须精确等于 workbuddy-selfhost");
 if (!Number.isInteger(backupIntervalSeconds) || backupIntervalSeconds < 3600 || backupIntervalSeconds > 604800) {
   errors.push("SELFHOST_BACKUP_INTERVAL_SECONDS 必须在 3600 到 604800 秒之间");
 }
