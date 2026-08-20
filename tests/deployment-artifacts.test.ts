@@ -252,9 +252,12 @@ test("自托管备份、恢复和运行手册维持可审计且默认无写入�
   assert.match(restore, /pg_restore --list/);
   assert.match(restore, /RESTORE_EXECUTE.*!=.*1/);
   assert.match(restore, /RESTORE_TARGET_ACK.*workbuddy_selfhost_uat/);
+  assert.match(restore, /if \[ "\$PGDATABASE" != "workbuddy_selfhost_uat" \]; then/);
+  assert.match(restore, /if \[ "\$\{RESTORE_TARGET_ACK:-\}" != "\$PGDATABASE" \]; then/);
   assert.match(restore, /pg_restore --clean --if-exists --no-owner --no-acl --exit-on-error --single-transaction/);
   assert.match(restore, /pg_isready -h "\$PGHOST" -p "\$PGPORT" -U "\$PGUSER" -d "\$PGDATABASE"/);
   assert.ok(restore.indexOf('pg_isready') > restore.indexOf('RESTORE_TARGET_ACK'), "dry-run 不得连接目标数据库");
+  assert.ok(restore.indexOf('pg_isready') > restore.indexOf('PGDATABASE" != "workbuddy_selfhost_uat'), "覆盖的 PGDATABASE 必须在连接前被拒绝");
   assert.doesNotMatch(restore, /postgres(?:ql)?:\/\//i);
 
   const backupService = composeServiceBlock(compose, "backup");

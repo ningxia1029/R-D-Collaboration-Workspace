@@ -45,7 +45,11 @@ if [ "${RESTORE_EXECUTE:-0}" != "1" ]; then
   echo "[selfhost-restore] dry-run complete; set RESTORE_EXECUTE=1 and RESTORE_TARGET_ACK=workbuddy_selfhost_uat to write" >&2
   exit 0
 fi
-if [ "${RESTORE_TARGET_ACK:-}" != "workbuddy_selfhost_uat" ]; then
+if [ "$PGDATABASE" != "workbuddy_selfhost_uat" ]; then
+  echo "[selfhost-restore] restore target database is not allowed" >&2
+  exit 1
+fi
+if [ "${RESTORE_TARGET_ACK:-}" != "$PGDATABASE" ]; then
   echo "[selfhost-restore] explicit target acknowledgement is required" >&2
   exit 1
 fi

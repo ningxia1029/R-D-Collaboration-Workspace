@@ -56,6 +56,8 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile 
 
 真正恢复要求双确认，且只可恢复到此隔离库：
 
+恢复目标数据库固定为 `workbuddy_selfhost_uat`，不可通过 `-e PGDATABASE=...` 覆盖；`RESTORE_TARGET_ACK` 必须精确等于该目标库。
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile restore run --rm -e BACKUP_FILE=workbuddy-YYYYMMDD-HHMMSS.dump -e RESTORE_EXECUTE=1 -e RESTORE_TARGET_ACK=workbuddy_selfhost_uat restore
 ```
