@@ -21,17 +21,17 @@
 - Modify: `.gitignore`
 - Modify: `tests/deployment-artifacts.test.ts`
 
-- [ ] **Step 1: 先添加失败的部署契约测试**
+- [x] **Step 1: 先添加失败的部署契约测试**
 
 在 `tests/deployment-artifacts.test.ts` 添加测试，读取以上四个新文件并断言：Compose 名称为 `workbuddy-selfhost`；使用 `postgres:16`；数据库名固定 `workbuddy_selfhost_uat`；数据库没有 `ports`；app 只绑定 `127.0.0.1:${SELFHOST_APP_PORT:-3010}:3000`；存在 `frontend`/`backend` 隔离网络；Cloudflare 使用独立 profile、`TUNNEL_TOKEN` 与固定镜像 digest；迁移先于 app；seed 只在 `demo-seed` profile；环境模板中的 Secret 为空；生成脚本使用加密随机数且拒绝覆盖；预检校验数据库密码、Auth Secret、备份周期和保留期；文件中不包含公开密码、Neon URL 或 tunnel token。
 
-- [ ] **Step 2: 运行测试并确认因文件缺失而失败**
+- [x] **Step 2: 运行测试并确认因文件缺失而失败**
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
 Expected: 新测试因 `docker-compose.selfhost.yml` 不存在而失败，原有部署测试保持通过。
 
-- [ ] **Step 3: 实现最小 Compose 与 Secret 生成**
+- [x] **Step 3: 实现最小 Compose 与 Secret 生成**
 
 `docker-compose.selfhost.yml` 必须定义：
 
@@ -101,7 +101,7 @@ volumes:
 
 在实际文件中补齐 healthcheck、`depends_on`、`no-new-privileges`、capability drop 和有界日志配置。`.env.selfhost.example` 仅作变量清单，禁止复制；必须运行 `new-selfhost-env.ps1` 生成真实文件。生成器使用 `RandomNumberGenerator` 生成 URL-safe PostgreSQL 密码、至少 32 字节 Auth Secret 和符合共享密码策略的 demo 密码，以无 BOM UTF-8 原子写入 `.env.selfhost`，存在时默认拒绝覆盖且不输出 Secret。`selfhost-compose.ps1` 固定项目名并透传 Compose 参数。`validate-selfhost-env.ts` 在任何容器写操作前 fail closed。
 
-- [ ] **Step 4: 运行目标测试和 Compose 静态解析**
+- [x] **Step 4: 运行目标测试和 Compose 静态解析**
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
@@ -126,7 +126,7 @@ if ($exitCode -ne 0) { exit $exitCode }
 
 Expected: 契约测试全部通过；Compose 使用临时生成的有效 env 静态解析，不创建容器或卷。
 
-- [ ] **Step 5: 显式暂存 Task 1 文件并提交**
+- [x] **Step 5: 显式暂存 Task 1 文件并提交**
 
 ```powershell
 git add -- docker-compose.selfhost.yml .env.selfhost.example scripts/new-selfhost-env.ps1 scripts/validate-selfhost-env.ts scripts/selfhost-compose.ps1 .gitignore tests/deployment-artifacts.test.ts docs/superpowers/plans/2026-08-20-self-hosted-uat.md
@@ -145,23 +145,23 @@ git commit -m "deploy: add isolated self-hosted UAT stack"
 - Modify: `.gitignore`
 - Modify: `tests/deployment-artifacts.test.ts`
 
-- [ ] **Step 1: 先添加失败的备份/恢复契约测试**
+- [x] **Step 1: 先添加失败的备份/恢复契约测试**
 
 断言备份脚本使用 `set -eu`、`umask 077`、`pg_dump --format=custom --no-owner --no-acl`、`.partial` 后原子 `mv`、`sha256sum`、有界保留期和 `find` 清理；恢复脚本验证 basename、同名 SHA-256、`pg_restore --list`，默认只检查，只有 `RESTORE_EXECUTE=1` 且 `RESTORE_TARGET_ACK=workbuddy_selfhost_uat` 时才允许 `--clean --if-exists --exit-on-error --single-transaction`。Compose 的 backup 服务只在 backend，挂载 `./backups/selfhost:/backups`，restore 使用显式 profile 和只读备份挂载。
 
-- [ ] **Step 2: 运行测试并确认因脚本缺失而失败**
+- [x] **Step 2: 运行测试并确认因脚本缺失而失败**
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
 Expected: 新备份契约因 `scripts/selfhost-backup.sh` 不存在而失败。
 
-- [ ] **Step 3: 实现备份、恢复与文档**
+- [x] **Step 3: 实现备份、恢复与文档**
 
 备份容器首次启动立即产生一份 custom archive 和同名 `.sha256`，成功后按 `SELFHOST_BACKUP_INTERVAL_SECONDS` 休眠；失败退出并由 `restart: unless-stopped` 重试。只删除同时具有 `.dump` 与 `.sha256`、且超过 `SELFHOST_BACKUP_RETENTION_DAYS` 的自身命名文件。恢复服务默认执行归档与 hash 检查，不写库。
 
 `docs/SELF_HOSTED_UAT.md` 必须覆盖：架构与现有资源隔离；生成 Secret；首次启动 migration；一次性 demo seed 的破坏性边界；本地 live/ready；Cloudflare remotely-managed tunnel、独立 token、published hostname 指向 `http://app:3000`；建议先配 Access Allow policy；备份路径和 dry-run 恢复；停止服务不删卷；明确禁止 `down -v`；应用回滚与数据库恢复分离；办公电脑必须常开。
 
-- [ ] **Step 4: 运行部署契约和 shell 语法验证**
+- [x] **Step 4: 运行部署契约和 shell 语法验证**
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
@@ -171,7 +171,7 @@ Run: `sh -n scripts/selfhost-restore.sh`（在已有 POSIX shell 环境执行；
 
 Expected: 契约测试全绿，两个 shell 脚本语法检查退出 0。
 
-- [ ] **Step 5: 显式暂存 Task 2 文件并提交**
+- [x] **Step 5: 显式暂存 Task 2 文件并提交**
 
 ```powershell
 git add -- scripts/selfhost-backup.sh scripts/selfhost-restore.sh docs/SELF_HOSTED_UAT.md .gitattributes docker-compose.selfhost.yml scripts/selfhost-compose.ps1 .gitignore tests/deployment-artifacts.test.ts docs/superpowers/plans/2026-08-20-self-hosted-uat.md
@@ -183,7 +183,7 @@ git commit -m "ops: add verified self-hosted database backups"
 **Files:**
 - Modify only if verification exposes a tested defect in Task 1/2 files.
 
-- [ ] **Step 1: 生成被忽略的本地 Secret 文件并检查不被 Git 跟踪**
+- [x] **Step 1: 生成被忽略的本地 Secret 文件并检查不被 Git 跟踪**
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/new-selfhost-env.ps1`
 
@@ -191,7 +191,7 @@ Run: `git status --short --ignored .env.selfhost backups/selfhost`
 
 Expected: `.env.selfhost` 存在且显示为 ignored；命令输出不包含任何 Secret 值。
 
-- [ ] **Step 2: 确认精确目标后创建全新 Compose 资源**
+- [x] **Step 2: 确认精确目标后创建全新 Compose 资源**
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 config --quiet`
 
@@ -199,7 +199,7 @@ Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -
 
 Expected: 只创建 `workbuddy-selfhost_*` 容器、网络与 `workbuddy-selfhost_workbuddy_selfhost_pgdata` 卷；既有 `cf-tunnel` 和 `workbuddy-uat_workbuddy_uat_pgdata` 保持原状态。
 
-- [ ] **Step 3: 执行一次性 seed 并启动备份**
+- [x] **Step 3: 执行一次性 seed 并启动备份**
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile demo-seed run --rm seed`
 
@@ -207,13 +207,13 @@ Run: `powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up -
 
 Expected: seed 仅在明确 profile 下执行；备份目录生成非空 `.dump` 与匹配 `.sha256`。
 
-- [ ] **Step 4: 验证本地健康、容器边界与恢复 dry-run**
+- [x] **Step 4: 验证本地健康、容器边界与恢复 dry-run**
 
 Run: `Invoke-RestMethod http://127.0.0.1:3010/api/health/live`
 
 Run: `Invoke-RestMethod http://127.0.0.1:3010/api/health/ready`
 
-Run: `$backupName = (Get-ChildItem .\backups\selfhost\workbuddy-*.dump | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name; powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile restore run --rm -e BACKUP_FILE=$backupName restore`
+Run: `$backupName = (Get-ChildItem .\backups\selfhost\workbuddy-*.dump | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name; powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile restore run --rm --env BACKUP_FILE=$backupName restore`
 
 Expected: live/ready 返回成功；恢复只列出归档、不执行写入；数据库没有宿主机端口；app 以非 root 运行。
 

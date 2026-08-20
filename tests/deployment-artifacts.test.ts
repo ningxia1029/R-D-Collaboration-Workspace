@@ -242,6 +242,8 @@ test("自托管 Compose wrapper 将裸 -d 重构为 up 后的 --detach", () => {
   }
   const docs = `${fs.readFileSync("docs/SELF_HOSTED_UAT.md", "utf8")}\n${fs.readFileSync("docs/superpowers/plans/2026-08-20-self-hosted-uat.md", "utf8")}`;
   assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-d\b/);
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-e\b/, "PowerShell 会把 Compose 的 -e 误解析为公共参数缩写；必须使用 --env/--eval");
+  assert.doesNotMatch(docs, /selfhost-compose\.ps1[^\r\n`]*\s-[a-zA-Z](?=\s|$)/, "wrapper 后不得使用会被 PowerShell 误绑定的单字母短参数");
 });
 
 test("自托管备份、恢复和运行手册维持可审计且默认无写入的数据库运维边界", () => {
