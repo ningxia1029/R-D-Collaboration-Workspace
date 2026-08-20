@@ -54,7 +54,7 @@
     "@uiw/react-md-editor": "^4.0.5",
     "antd": "^5.22.5",
     "bcryptjs": "^2.4.3",
-    "dayjs": "^1.11.13",
+    "dayjs": "^1.11.22",
     "frappe-gantt": "^0.6.1",
     "mermaid": "^11.4.1",
     "next": "15.5.23",
