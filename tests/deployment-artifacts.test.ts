@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 
 function composeServiceBlock(compose: string, service: string) {
   const match = compose.match(new RegExp(`^  ${service}:\\n([\\s\\S]*?)(?=^  [A-Za-z][A-Za-z0-9_-]*:\\n|^volumes:|^networks:|(?![\\s\\S]))`, "m"));
@@ -146,6 +148,7 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
   assert.match(generator, /New-UrlSafeSecret 24\)!aA9/);
   assert.match(generator, /\$demoPassword.*!aA9/);
   assert.match(generator, /if \(\(Test-Path -LiteralPath \$resolvedOutput\) -and -not \$Force\)/);
+  assert.doesNotMatch(generator, /OutputPath\s*=\s*\([^\r\n]*PSScriptRoot/);
   assert.match(generator, /TrimEnd\('='\)\.Replace\('\+', '-'\)\.Replace\('\/', '_'\)/);
   assert.match(generator, /\$tempPath = Join-Path \$parent/);
   assert.match(generator, /UTF8Encoding.*\$false/);
@@ -199,6 +202,26 @@ test("自托管预检只拒绝完整公开占位词及其数字或分隔符后�
     const result = validateSelfhostEnv({ [key]: value });
     assert.notEqual(result.status, 0, `${key} 的低多样性值必须被拒绝`);
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(value));
+  }
+});
+
+test("生成器在 Windows PowerShell 5.1 中不传 OutputPath 时使用脚本父目录", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workbuddy-selfhost-default-"));
+  const scriptsDir = path.join(root, "scripts");
+  const copiedScript = path.join(scriptsDir, "new-selfhost-env.ps1");
+  const expectedEnv = path.join(root, ".env.selfhost");
+  fs.mkdirSync(scriptsDir);
+  fs.copyFileSync("scripts/new-selfhost-env.ps1", copiedScript);
+  try {
+    const result = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", ["-NoProfile", "-File", copiedScript], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), expectedEnv);
+    assert.ok(fs.existsSync(expectedEnv));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 

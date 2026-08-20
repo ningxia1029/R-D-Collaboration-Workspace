@@ -1,9 +1,16 @@
 [CmdletBinding()]
 param(
   [switch]$Force,
-  [string]$OutputPath = (Join-Path (Split-Path -Parent $PSScriptRoot) ".env.selfhost")
+  [string]$OutputPath
 )
 
+if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+  throw "Script root is unavailable."
+}
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+  $OutputPath = Join-Path $repoRoot ".env.selfhost"
+}
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
 if ((Test-Path -LiteralPath $resolvedOutput) -and -not $Force) {
   throw "Target exists; use -Force to overwrite it."
