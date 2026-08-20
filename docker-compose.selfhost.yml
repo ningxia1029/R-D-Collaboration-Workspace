@@ -145,6 +145,54 @@ services:
     logging: *bounded-logging
     <<: *restricted-security
 
+  backup:
+    image: postgres:16
+    user: "999:999"
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: workbuddy_selfhost
+      PGDATABASE: workbuddy_selfhost_uat
+      PGPASSWORD: ${SELFHOST_POSTGRES_PASSWORD:?请设置 SELFHOST_POSTGRES_PASSWORD}
+      SELFHOST_BACKUP_INTERVAL_SECONDS: ${SELFHOST_BACKUP_INTERVAL_SECONDS:-86400}
+      SELFHOST_BACKUP_RETENTION_DAYS: ${SELFHOST_BACKUP_RETENTION_DAYS:-7}
+    entrypoint: ["/bin/sh", "/scripts/selfhost-backup.sh"]
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./scripts/selfhost-backup.sh:/scripts/selfhost-backup.sh:ro
+      - ./backups/selfhost:/backups
+    restart: unless-stopped
+    networks: [backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  restore:
+    profiles: ["restore"]
+    image: postgres:16
+    user: "999:999"
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: workbuddy_selfhost
+      PGDATABASE: workbuddy_selfhost_uat
+      PGPASSWORD: ${SELFHOST_POSTGRES_PASSWORD:?请设置 SELFHOST_POSTGRES_PASSWORD}
+      BACKUP_FILE: ${BACKUP_FILE:-}
+      RESTORE_EXECUTE: "0"
+      RESTORE_TARGET_ACK: ""
+    entrypoint: ["/bin/sh", "/scripts/selfhost-restore.sh"]
+    volumes:
+      - ./scripts/selfhost-restore.sh:/scripts/selfhost-restore.sh:ro
+      - ./backups/selfhost:/backups:ro
+    networks: [backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
 volumes:
   workbuddy_selfhost_uat_pgdata:
 

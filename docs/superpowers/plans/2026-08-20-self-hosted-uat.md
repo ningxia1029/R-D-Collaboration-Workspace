@@ -139,7 +139,9 @@ git commit -m "deploy: add isolated self-hosted UAT stack"
 - Create: `scripts/selfhost-backup.sh`
 - Create: `scripts/selfhost-restore.sh`
 - Create: `docs/SELF_HOSTED_UAT.md`
+- Create: `.gitattributes`
 - Modify: `docker-compose.selfhost.yml`
+- Modify: `scripts/selfhost-compose.ps1`（只创建被忽略的 `backups/selfhost` 目录，不删除或覆盖备份）
 - Modify: `.gitignore`
 - Modify: `tests/deployment-artifacts.test.ts`
 
@@ -163,16 +165,16 @@ Expected: 新备份契约因 `scripts/selfhost-backup.sh` 不存在而失败。
 
 Run: `node node_modules/tsx/dist/cli.mjs --test tests/deployment-artifacts.test.ts`
 
-Run: `docker run --rm -v ${PWD}/scripts:/scripts:ro postgres:16 sh -n /scripts/selfhost-backup.sh`
+Run: `sh -n scripts/selfhost-backup.sh`（在已有 POSIX shell 环境执行；不以此步骤启动 Docker）
 
-Run: `docker run --rm -v ${PWD}/scripts:/scripts:ro postgres:16 sh -n /scripts/selfhost-restore.sh`
+Run: `sh -n scripts/selfhost-restore.sh`（在已有 POSIX shell 环境执行；不以此步骤启动 Docker）
 
 Expected: 契约测试全绿，两个 shell 脚本语法检查退出 0。
 
 - [ ] **Step 5: 显式暂存 Task 2 文件并提交**
 
 ```powershell
-git add -- scripts/selfhost-backup.sh scripts/selfhost-restore.sh docs/SELF_HOSTED_UAT.md docker-compose.selfhost.yml .gitignore tests/deployment-artifacts.test.ts
+git add -- scripts/selfhost-backup.sh scripts/selfhost-restore.sh docs/SELF_HOSTED_UAT.md .gitattributes docker-compose.selfhost.yml scripts/selfhost-compose.ps1 .gitignore tests/deployment-artifacts.test.ts docs/superpowers/plans/2026-08-20-self-hosted-uat.md
 git commit -m "ops: add verified self-hosted database backups"
 ```
 

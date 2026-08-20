@@ -202,6 +202,122 @@ test("自托管预检只拒绝完整公开占位词及其数字或分隔符后�
   }
 });
 
+test("自托管备份、恢复和运行手册维持可审计且默认无写入的数据库运维边界", () => {
+  const compose = fs.readFileSync("docker-compose.selfhost.yml", "utf8");
+  const backup = fs.readFileSync("scripts/selfhost-backup.sh", "utf8");
+  const restore = fs.readFileSync("scripts/selfhost-restore.sh", "utf8");
+  const handbook = fs.readFileSync("docs/SELF_HOSTED_UAT.md", "utf8");
+  const attributes = fs.readFileSync(".gitattributes", "utf8");
+  const composeWrapper = fs.readFileSync("scripts/selfhost-compose.ps1", "utf8");
+
+  assert.match(backup, /^#!\/bin\/sh\nset -eu\numask 077/m);
+  assert.match(backup, /SELFHOST_BACKUP_INTERVAL_SECONDS/);
+  assert.match(backup, /3600.*604800|604800.*3600/);
+  assert.match(backup, /SELFHOST_BACKUP_RETENTION_DAYS/);
+  assert.match(backup, /1.*90|90.*1/);
+  assert.match(backup, /PGHOST.*PGUSER.*PGDATABASE.*PGPASSWORD/s);
+  assert.match(backup, /pg_dump --format=custom --no-owner --no-acl/);
+  assert.match(backup, /dump_partial=.*\.partial/);
+  assert.match(backup, /mv "\$dump_partial" "\$dump_file"/);
+  assert.match(backup, /sha256sum "\$dump_partial"/);
+  assert.match(backup, /printf '%s  %s\\n' "\$hash" "\$dump_name" > "\$sha_partial"/);
+  assert.match(backup, /mv "\$sha_partial" "\$sha_file"/);
+  assert.match(backup, /trap .*partial/);
+  assert.match(backup, /find .*workbuddy-\?\?\?\?\?\?\?\?-\?\?\?\?\?\?\.dump/);
+  assert.match(backup, /\[ -f "\$dump" \].*\[ -f "\$sha" \]/s);
+  assert.match(backup, /backup_once\nwhile :/);
+  assert.match(backup, /is_backup_name\(\)/);
+  assert.match(backup, /workbuddy-\[0-9\](?:\[0-9\]){7}-\[0-9\](?:\[0-9\]){5}\.dump/);
+  assert.ok(backup.indexOf('sha256sum "$dump_partial"') < backup.indexOf('mv "$dump_partial" "$dump_file"'), "checksum 必须在 dump 发布前完成");
+  assert.match(backup, /final_dump="\$dump_file"/);
+  assert.match(backup, /final_sha="\$sha_file"/);
+  assert.match(backup, /pair_committed=0/);
+  assert.match(backup, /if \[ "\$pair_committed" != "1" \]; then/);
+  assert.equal((backup.match(/pair_committed=1/g) ?? []).length, 1, "完整 pair 只能通过一次提交标记保留");
+  assert.ok(backup.indexOf('final_dump="$dump_file"') < backup.indexOf('mv "$dump_partial" "$dump_file"'), "最终 dump 路径必须在发布前登记");
+  assert.ok(backup.indexOf('final_sha="$sha_file"') < backup.indexOf('mv "$dump_partial" "$dump_file"'), "最终 sha 路径必须在发布前登记");
+  assert.ok(backup.indexOf('pair_committed=1') > backup.indexOf('mv "$sha_partial" "$sha_file"'), "只能在两个最终文件发布后提交 pair");
+  assert.ok(backup.indexOf('mv "$sha_partial" "$sha_file"') < backup.indexOf('mv "$dump_partial" "$dump_file"'), "checksum 必须先于 dump 成为最终文件");
+  assert.doesNotMatch(backup, /cleanup_orphan_checksums/);
+  assert.doesNotMatch(backup, /deleted-orphan-checksum/);
+  assert.match(backup, /trap cleanup_uncommitted_partials_and_finals 0/);
+  assert.match(backup, /trap abort_uncommitted_pair HUP INT TERM/);
+  assert.match(backup, /abort_uncommitted_pair\(\)[\s\S]*exit 1/);
+
+  assert.match(restore, /^#!\/bin\/sh\nset -eu/m);
+  assert.match(restore, /BACKUP_FILE/);
+  assert.match(restore, /\*\/*|\\\\/);
+  assert.match(restore, /workbuddy-\[0-9\](?:\[0-9\]){7}-\[0-9\](?:\[0-9\]){5}\.dump/);
+  assert.match(restore, /sha256sum -c/);
+  assert.match(restore, /pg_restore --list/);
+  assert.match(restore, /RESTORE_EXECUTE.*!=.*1/);
+  assert.match(restore, /RESTORE_TARGET_ACK.*workbuddy_selfhost_uat/);
+  assert.match(restore, /pg_restore --clean --if-exists --no-owner --no-acl --exit-on-error --single-transaction/);
+  assert.match(restore, /pg_isready -h "\$PGHOST" -p "\$PGPORT" -U "\$PGUSER" -d "\$PGDATABASE"/);
+  assert.ok(restore.indexOf('pg_isready') > restore.indexOf('RESTORE_TARGET_ACK'), "dry-run 不得连接目标数据库");
+  assert.doesNotMatch(restore, /postgres(?:ql)?:\/\//i);
+
+  const backupService = composeServiceBlock(compose, "backup");
+  const restoreService = composeServiceBlock(compose, "restore");
+  assert.match(backupService, /image: postgres:16/);
+  assert.match(backupService, /user: "999:999"/);
+  for (const key of ["PGHOST: db", "PGUSER: workbuddy_selfhost", "PGDATABASE: workbuddy_selfhost_uat", "PGPASSWORD:"]) {
+    assert.match(backupService, new RegExp(key));
+  }
+  assert.match(backupService, /\.\/scripts\/selfhost-backup\.sh:\/scripts\/selfhost-backup\.sh:ro/);
+  assert.match(backupService, /\.\/backups\/selfhost:\/backups/);
+  assert.match(backupService, /networks: \[backend\]/);
+  assert.match(backupService, /preflight:[\s\S]*db:[\s\S]*migrate:/);
+  assert.match(backupService, /restart: unless-stopped/);
+  assert.match(backupService, /logging: \*bounded-logging/);
+  assert.match(backupService, /security_opt:|<<: \*restricted-security/);
+  assert.match(backupService, /cap_drop:|<<: \*restricted-security/);
+  assert.match(restoreService, /profiles: \["restore"\]/);
+  assert.match(restoreService, /image: postgres:16/);
+  assert.match(restoreService, /user: "999:999"/);
+  assert.doesNotMatch(restoreService, /depends_on:/);
+  assert.match(restoreService, /\.\/backups\/selfhost:\/backups:ro/);
+  assert.match(restoreService, /networks: \[backend\]/);
+  assert.match(restoreService, /RESTORE_EXECUTE: "0"/);
+  assert.match(restoreService, /security_opt:|<<: \*restricted-security/);
+  assert.match(restoreService, /cap_drop:|<<: \*restricted-security/);
+
+  assert.match(attributes, /^\*\.sh text eol=lf$/m);
+  const gitignore = fs.readFileSync(".gitignore", "utf8");
+  assert.match(gitignore, /^backups\/$/m);
+  for (const phrase of ["down -v", "RESTORE_EXECUTE=1", "RESTORE_TARGET_ACK=workbuddy_selfhost_uat", "http://app:3000", "Cloudflare", "live", "ready"]) {
+    assert.match(handbook, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+  assert.match(handbook, /恢复前备份/);
+  assert.match(handbook, /stop tunnel app backup/);
+  assert.match(handbook, /migration/);
+  assert.match(handbook, /数据/);
+  assert.match(handbook, /ACL/);
+  assert.match(handbook, /icacls\.exe/);
+  assert.match(handbook, /developers\.cloudflare\.com\/cloudflare-one\/networks\/connectors\/cloudflare-tunnel\/get-started\/create-remote-tunnel/);
+  assert.match(composeWrapper, /\[System\.Environment\]::OSVersion\.Platform/);
+  assert.doesNotMatch(composeWrapper, /icacls\.exe/);
+  assert.match(composeWrapper, /SetAccessRuleProtection\(\$true, \$false\)/);
+  assert.match(composeWrapper, /PurgeAccessRules/);
+  assert.match(composeWrapper, /FileSystemAccessRule/);
+  assert.match(composeWrapper, /Get-ChildItem -LiteralPath \$backupDirectory -Force -Recurse/);
+  assert.match(composeWrapper, /Set-Acl/);
+  assert.match(composeWrapper, /Get-Acl/);
+  assert.match(composeWrapper, /AreAccessRulesProtected/);
+  assert.match(composeWrapper, /AccessControlType.*Deny/);
+  assert.match(composeWrapper, /allowedSidValues/);
+  assert.match(composeWrapper, /S-1-5-18/);
+  assert.match(composeWrapper, /S-1-5-32-544/);
+  assert.match(composeWrapper, /WindowsIdentity.*GetCurrent/);
+  assert.match(composeWrapper, /InheritanceFlags.*ObjectInherit.*ContainerInherit/);
+  assert.match(handbook, /--force-recreate backup/);
+  assert.match(handbook, /beforeBackupNames/);
+  assert.match(handbook, /deadline/);
+  assert.match(handbook, /Start-Sleep/);
+  assert.match(handbook, /Test-Path.*sha256/);
+  assert.doesNotMatch(handbook, /logs --tail 20 backup/);
+});
+
 test("Render Singapore UAT Blueprint 固定 PG16、迁移、健康检查和秘密边界", () => {
   const blueprint = fs.readFileSync("render.yaml", "utf8");
 
