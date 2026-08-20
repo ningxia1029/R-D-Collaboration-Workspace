@@ -48,3 +48,24 @@ test("UAT 环境预检拒绝需要 URL 编码的数据库密码和公开占位�
   assert.match(script, /authSecret\.length < 32/);
   assert.match(script, /postgresPassword === authSecret/);
 });
+
+test("Render Singapore UAT Blueprint 固定 PG16、迁移、健康检查和秘密边界", () => {
+  const blueprint = fs.readFileSync("render.yaml", "utf8");
+
+  assert.match(blueprint, /runtime: node/);
+  assert.equal(blueprint.match(/region: singapore/g)?.length, 2);
+  assert.match(blueprint, /plan: starter/);
+  assert.match(blueprint, /plan: basic-256mb/);
+  assert.match(blueprint, /postgresMajorVersion: "16"/);
+  assert.match(blueprint, /databaseName: workbuddy_plm_uat/);
+  assert.match(blueprint, /ipAllowList: \[\]/);
+  assert.match(blueprint, /preDeployCommand: npx prisma migrate deploy/);
+  assert.match(blueprint, /healthCheckPath: \/api\/health\/ready/);
+  assert.match(blueprint, /fromDatabase:[\s\S]*property: connectionString/);
+  assert.match(blueprint, /key: AUTH_SECRET\s+generateValue: true/);
+  assert.match(blueprint, /key: DEPLOYMENT_ENV\s+value: uat/);
+  assert.match(blueprint, /key: AUTH_RATE_LIMIT_MODE\s+value: isolated-uat/);
+  assert.match(blueprint, /key: DEMO_SEED_PASSWORD\s+sync: false/);
+  assert.match(blueprint, /initialDeployHook: NODE_ENV=uat npm run db:seed/);
+  assert.doesNotMatch(blueprint, /neon\.tech|Demo@123456|BEGIN (?:RSA |EC )?PRIVATE KEY/);
+});

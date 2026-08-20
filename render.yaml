@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: workbuddy-plm-uat
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm ci && npm run build && npm run standalone:prepare
+    preDeployCommand: npx prisma migrate deploy
+    startCommand: node .next/standalone/server.js
+    initialDeployHook: NODE_ENV=uat npm run db:seed
+    healthCheckPath: /api/health/ready
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_VERSION
+        value: 24.12.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: workbuddy-plm-uat-db
+          property: connectionString
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_TRUST_HOST
+        value: "true"
+      - key: NEXT_PUBLIC_DEMO_MODE
+        value: "false"
+      - key: DEPLOYMENT_ENV
+        value: uat
+      - key: AUTH_RATE_LIMIT_MODE
+        value: isolated-uat
+      - key: DEMO_SEED_ALLOW
+        value: "1"
+      - key: DEMO_SEED_TARGET_ACK
+        value: workbuddy_plm_uat
+      - key: DEMO_SEED_PASSWORD
+        sync: false
+
+databases:
+  - name: workbuddy-plm-uat-db
+    plan: basic-256mb
+    region: singapore
+    postgresMajorVersion: "16"
+    databaseName: workbuddy_plm_uat
+    user: workbuddy_plm_uat
+    diskSizeGB: 5
+    ipAllowList: []
