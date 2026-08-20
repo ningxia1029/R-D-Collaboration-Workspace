@@ -20,8 +20,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await requirePerm("kb:create");
     const data = await req.json();
+    const user = await requirePerm("kb:create", data.projectId ?? undefined);
     if (!data.title || typeof data.contentMd !== "string") {
       return Response.json({ error: "title 与 contentMd 必填" }, { status: 400 });
     }

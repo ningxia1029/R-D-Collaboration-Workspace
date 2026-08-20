@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Layout, Menu, Dropdown, Avatar, Space, Typography, theme } from "antd";
+import { Layout, Menu, Dropdown, Avatar, Space, Typography, theme, Button, Drawer, Grid } from "antd";
 import {
   DashboardOutlined,
   ProjectOutlined,
@@ -13,6 +13,8 @@ import {
   LogoutOutlined,
   UserOutlined,
   AuditOutlined,
+  RobotOutlined,
+  MenuOutlined,
 } from "@ant-design/icons";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
@@ -31,6 +33,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.lg;
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const {
     token: { colorBgContainer },
   } = theme.useToken();
@@ -42,6 +47,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (pathname.startsWith("/plm/materials")) return "/plm/materials";
     if (pathname.startsWith("/knowledge")) return "/knowledge";
     if (pathname.startsWith("/resources")) return "/resources";
+    if (pathname === "/agent" || pathname.startsWith("/agent/")) return "/agent";
+    if (pathname.startsWith("/admin/agent")) return "/admin/agent";
+    if (pathname.startsWith("/admin/organization")) return "/admin/organization";
     if (pathname.startsWith("/admin/users")) return "/admin/users";
     if (pathname.startsWith("/admin/audit")) return "/admin/audit";
     return pathname;
@@ -63,6 +71,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     },
     { key: "/knowledge", icon: <BookOutlined />, label: "工程知识库" },
     { key: "/resources", icon: <TeamOutlined />, label: "资源与工时" },
+    { key: "/agent", icon: <RobotOutlined />, label: "研发智能体" },
     ...(isAdmin
       ? [
           {
@@ -71,39 +80,59 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             label: "系统管理",
             children: [
               { key: "/admin/users", label: "用户与角色" },
+              { key: "/admin/organization", icon: <TeamOutlined />, label: "组织与产能" },
               { key: "/admin/audit", icon: <AuditOutlined />, label: "审计日志" },
+              { key: "/admin/agent", icon: <RobotOutlined />, label: "智能体运维" },
             ],
           },
         ]
       : []),
   ];
 
+  const navigation = (
+    <>
+      <div
+        style={{
+          height: 56,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#fff",
+          fontWeight: 700,
+          fontSize: 16,
+          letterSpacing: 1,
+        }}
+      >
+        PLM 研发协同平台
+      </div>
+      <Menu
+        theme="dark"
+        mode="inline"
+        selectedKeys={[selectedKey]}
+        defaultOpenKeys={["plm", "admin"]}
+        items={menuItems}
+        onClick={({ key }) => {
+          router.push(key);
+          setNavigationOpen(false);
+        }}
+      />
+    </>
+  );
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider width={220} theme="dark">
-        <div
-          style={{
-            height: 56,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#fff",
-            fontWeight: 700,
-            fontSize: 16,
-            letterSpacing: 1,
-          }}
-        >
-          PLM 研发协同平台
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          defaultOpenKeys={["plm", "admin"]}
-          items={menuItems}
-          onClick={({ key }) => router.push(key)}
-        />
-      </Sider>
+      {!isMobile && <Sider width={220} theme="dark">{navigation}</Sider>}
+      <Drawer
+        title={null}
+        placement="left"
+        width={260}
+        open={isMobile && navigationOpen}
+        onClose={() => setNavigationOpen(false)}
+        styles={{ body: { padding: 0, background: "#001529" } }}
+        aria-label="主导航"
+      >
+        {navigation}
+      </Drawer>
       <Layout>
         <Header
           style={{
@@ -111,14 +140,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "0 24px",
+            padding: isMobile ? "0 12px" : "0 24px",
             borderBottom: "1px solid #f0f0f0",
             position: "sticky",
             top: 0,
             zIndex: 10,
           }}
         >
-          <GlobalSearch />
+          <Space style={{ minWidth: 0, flex: 1 }}>
+            {isMobile && (
+              <Button
+                type="text"
+                icon={<MenuOutlined />}
+                aria-label="打开主导航"
+                onClick={() => setNavigationOpen(true)}
+              />
+            )}
+            <GlobalSearch />
+          </Space>
           <Dropdown
             menu={{
               items: [{ key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: () => signOut({ callbackUrl: "/login" }) }],
@@ -127,15 +166,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Space style={{ cursor: "pointer" }}>
               <Avatar icon={<UserOutlined />} />
               <span>
-                {session?.user?.name ?? "…"}
+                {!isMobile && (session?.user?.name ?? "…")}
                 <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                  {ROLE_LABELS[session?.user?.roleName ?? ""] ?? ""}
+                  {!isMobile && (ROLE_LABELS[session?.user?.roleName ?? ""] ?? "")}
                 </Typography.Text>
               </span>
             </Space>
           </Dropdown>
         </Header>
-        <Content style={{ padding: 24, overflow: "auto" }}>{children}</Content>
+        <Content style={{ padding: isMobile ? 12 : 24, overflow: "auto", minWidth: 0 }}>{children}</Content>
       </Layout>
     </Layout>
   );

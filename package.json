@@ -1,6 +1,6 @@
 {
   "name": "plm-project-platform",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "公司级轻量级 PLM + 项目管理 + 工程知识库一体化平台",
   "main": "desktop/main.js",
@@ -11,19 +11,45 @@
     "postinstall": "prisma generate || echo \"prisma generate 失败，可稍后手动运行 npm run db:push\"",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:agent-indexes": "tsx scripts/apply-agent-online-indexes.ts",
+    "db:agent-verify": "tsx scripts/verify-agent-governance-db.ts",
+    "db:agent-tools-verify": "tsx scripts/verify-agent-tools-db.ts",
+    "db:agent-runtime-verify": "tsx scripts/verify-agent-runtime-db.ts",
+    "db:agent-ui-verify": "tsx scripts/verify-agent-ui-db.ts",
+    "db:agent-knowledge-verify": "tsx scripts/verify-agent-knowledge-db.ts",
+    "db:agent-org-verify": "tsx scripts/verify-agent-organization-db.ts",
+    "db:agent-action-verify": "tsx scripts/verify-agent-actions-db.ts",
+    "db:agent-restore-verify": "tsx scripts/verify-agent-restore-db.ts",
+    "agent:worker": "tsx agent-worker/src/cli.ts",
+    "agent:eval": "tsx scripts/run-agent-eval.ts",
+    "agent:eval:live": "tsx scripts/run-agent-live-eval.ts",
+    "agent:benchmark": "tsx scripts/benchmark-agent-runtime.ts",
+    "agent:retention": "tsx scripts/agent-retention-sweep.ts",
+    "agent:knowledge-indexer": "tsx scripts/agent-knowledge-indexer.ts",
     "setup": "prisma db push && prisma db seed",
+    "test": "tsx --test desktop/updater.test.cjs tests/*.test.ts",
+    "pretest:e2e": "tsx scripts/prepare-agent-standalone.ts",
+    "test:e2e": "playwright test",
+    "standalone:prepare": "tsx scripts/prepare-agent-standalone.ts",
     "typecheck": "tsc --noEmit",
-    "build:desktop": "node scripts/build-desktop.mjs"
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "release": "node scripts/release.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
+  "engines": {
+    "node": ">=22 <27"
+  },
   "dependencies": {
     "@ant-design/icons": "^5.5.2",
-    "@ant-design/nextjs-registry": "^1.0.2",
+    "@ant-design/nextjs-registry": "1.3.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^8.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@langchain/core": "1.2.5",
+    "@langchain/langgraph": "1.4.9",
     "@prisma/client": "^5.22.0",
     "@uiw/react-md-editor": "^4.0.5",
     "antd": "^5.22.5",
@@ -31,8 +57,8 @@
     "dayjs": "^1.11.13",
     "frappe-gantt": "^0.6.1",
     "mermaid": "^11.4.1",
-    "next": "^14.2.21",
-    "next-auth": "5.0.0-beta.25",
+    "next": "15.5.23",
+    "next-auth": "5.0.0-beta.32",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -41,20 +67,25 @@
     "rehype-highlight": "^7.0.1",
     "remark-gfm": "^4.0.0",
     "sass": "^1.77.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.17.10",
     "@types/papaparse": "^5.3.15",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3",
-    "electron-updater": "^6.3.9",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "electron-updater": "6.8.9",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "8.5.26",
+    "sharp": "0.35.3"
   }
 }

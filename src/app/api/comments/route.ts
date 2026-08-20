@@ -1,13 +1,15 @@
-import { requireAuth, apiError } from "@/lib/rbac";
+import { requireAuth, requireEntityAccess, effectiveRole, roleCanComment, apiError, ApiError, type ProjectEntityType } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: Request) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
     const url = new URL(req.url);
     const entityType = url.searchParams.get("entityType");
     const entityId = url.searchParams.get("entityId");
     if (!entityType || !entityId) return Response.json({ error: "entityType 与 entityId 必填" }, { status: 400 });
+    if (!["TASK", "ECO", "ECR", "DOCUMENT"].includes(entityType)) throw new ApiError(400, "不支持的评论实体类型");
+    await requireEntityAccess(user, entityType as ProjectEntityType, entityId);
     const comments = await prisma.comment.findMany({
       where: { entityType, entityId },
       orderBy: { createdAt: "asc" },
@@ -30,6 +32,10 @@ export async function POST(req: Request) {
     if (!data.entityType || !data.entityId || !data.content) {
       return Response.json({ error: "entityType/entityId/content 必填" }, { status: 400 });
     }
+    if (!["TASK", "ECO", "ECR", "DOCUMENT"].includes(data.entityType)) throw new ApiError(400, "不支持的评论实体类型");
+    const projectId = await requireEntityAccess(user, data.entityType as ProjectEntityType, data.entityId);
+    const role = await effectiveRole(user, projectId ?? undefined);
+    if (!roleCanComment(role)) throw new ApiError(403, "访客仅可查看评论");
     const comment = await prisma.comment.create({
       data: { entityType: data.entityType, entityId: data.entityId, userId: user.id, content: data.content },
     });

@@ -13,6 +13,8 @@ asar: false
 files:
   - desktop/main.js
   - desktop/preload.js
+  - desktop/config-preload.js
+  - desktop/config.html
   - desktop/updater.js
   - desktop/icon.ico
   - builtin-env.json
@@ -23,6 +25,10 @@ win:
   target:
     - portable
   icon: desktop/icon.ico
+  # 正式发布由 CI 注入 CSC_LINK/CSC_KEY_PASSWORD；未签名产物只能用于本地验收。
+  signingHashAlgorithms:
+    - sha256
+  verifyUpdateCodeSignature: true
 
 portable:
   artifactName: "PLM平台-${version}-便携版.exe"

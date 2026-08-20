@@ -4,6 +4,58 @@ import { ApiError } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
 import { indexEntity, removeFromIndex } from "@/lib/services/searchService";
 import { TASK_STATUSES, type TaskStatus } from "@/lib/constants";
+import type { Prisma } from "@prisma/client";
+import { writeActivityEvent } from "@/lib/agent/activity";
+
+type TaskDb = Prisma.TransactionClient | typeof prisma;
+const TASK_MUTABLE_FIELDS = ["title", "description", "status", "priority", "phaseId", "assigneeId", "parentId", "ecoId", "estimatedHours", "isMilestone", "sortOrder"];
+
+function buildTaskPatch(data: Record<string, unknown>) {
+  const patch: Record<string, unknown> = {};
+  for (const field of TASK_MUTABLE_FIELDS) if (field in data) patch[field] = data[field];
+  if ("startDate" in data) {
+    const value = data.startDate ? new Date(data.startDate as string) : null;
+    if (value && Number.isNaN(value.getTime())) throw new ApiError(400, "开始日期无效");
+    patch.startDate = value;
+  }
+  if ("dueDate" in data) {
+    const value = data.dueDate ? new Date(data.dueDate as string) : null;
+    if (value && Number.isNaN(value.getTime())) throw new ApiError(400, "截止日期无效");
+    patch.dueDate = value;
+  }
+  return patch;
+}
+
+async function validateTaskReferences(db: TaskDb, projectId: string, data: Record<string, unknown>, taskId?: string) {
+  if (data.phaseId) {
+    const phase = await db.phase.findUnique({ where: { id: String(data.phaseId) }, select: { projectId: true } });
+    if (!phase || phase.projectId !== projectId) throw new ApiError(400, "阶段不存在或不属于当前项目");
+  }
+  if (data.ecoId) {
+    const eco = await db.changeLog.findUnique({ where: { id: String(data.ecoId) }, select: { projectId: true } });
+    if (!eco || eco.projectId !== projectId) throw new ApiError(400, "ECO 不存在或不属于当前项目");
+  }
+  if (data.assigneeId) {
+    const member = await db.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId: String(data.assigneeId) } },
+      include: { user: { select: { status: true } } },
+    });
+    if (!member || member.user.status !== "active") throw new ApiError(400, "负责人不是当前项目的有效成员");
+  }
+  if (data.parentId) {
+    let cursor: string | null = String(data.parentId);
+    const visited = new Set<string>();
+    while (cursor) {
+      if (cursor === taskId || visited.has(cursor)) throw new ApiError(400, "父任务关系会形成循环");
+      visited.add(cursor);
+      const parent: { projectId: string; parentId: string | null } | null = await db.task.findUnique({
+        where: { id: cursor }, select: { projectId: true, parentId: true },
+      });
+      if (!parent || parent.projectId !== projectId) throw new ApiError(400, "父任务不存在或跨项目");
+      cursor = parent.parentId;
+    }
+  }
+}
 
 export const taskInclude = {
   assignee: { select: { id: true, name: true, email: true } },
@@ -35,10 +87,7 @@ export async function createTask(userId: string, data: {
   startDate?: string | null; dueDate?: string | null; estimatedHours?: number | null;
   isMilestone?: boolean; ecoId?: string | null;
 }) {
-  if (data.parentId) {
-    const parent = await prisma.task.findUnique({ where: { id: data.parentId } });
-    if (!parent || parent.projectId !== data.projectId) throw new ApiError(400, "父任务不存在或跨项目");
-  }
+  await validateTaskReferences(prisma, data.projectId, data as Record<string, unknown>);
   const task = await prisma.task.create({
     data: {
       projectId: data.projectId,
@@ -63,24 +112,38 @@ export async function createTask(userId: string, data: {
 }
 
 export async function updateTask(userId: string, id: string, data: Record<string, unknown>, opts?: { onlyOwn?: boolean }) {
-  const before = await prisma.task.findUnique({ where: { id } });
-  if (!before) throw new ApiError(404, "任务不存在");
-  if (opts?.onlyOwn && before.assigneeId !== userId && before.createdBy !== userId) {
-    throw new ApiError(403, "只能修改自己负责的任务");
-  }
   if (data.status && !TASK_STATUSES.includes(data.status as TaskStatus)) {
     throw new ApiError(400, `非法任务状态：${data.status}`);
   }
-  const patch: Record<string, unknown> = {};
-  const fields = ["title", "description", "status", "priority", "phaseId", "assigneeId", "parentId", "ecoId", "estimatedHours", "isMilestone", "sortOrder"];
-  for (const f of fields) if (f in data) patch[f] = data[f];
-  if ("startDate" in data) patch.startDate = data.startDate ? new Date(data.startDate as string) : null;
-  if ("dueDate" in data) patch.dueDate = data.dueDate ? new Date(data.dueDate as string) : null;
-
-  const task = await prisma.task.update({ where: { id }, data: patch, include: taskInclude });
-  await writeAudit({
-    userId, action: "status" in patch ? "STATUS_CHANGE" : "UPDATE", entityType: "TASK", entityId: id,
-    diff: { before: { status: before.status, title: before.title }, after: patch },
+  const patch = buildTaskPatch(data);
+  const task = await prisma.$transaction(async (tx) => {
+    const before = await tx.task.findUnique({ where: { id } });
+    if (!before) throw new ApiError(404, "任务不存在");
+    if (opts?.onlyOwn && before.assigneeId !== userId && before.createdBy !== userId) {
+      throw new ApiError(403, "只能修改自己负责的任务");
+    }
+    await validateTaskReferences(tx, before.projectId, data, id);
+    const updated = await tx.task.update({ where: { id }, data: patch, include: taskInclude });
+    await writeAudit({
+      userId, action: "status" in patch ? "STATUS_CHANGE" : "UPDATE", entityType: "TASK", entityId: id,
+      diff: { before: { status: before.status, title: before.title }, after: patch },
+    }, tx);
+    if ("status" in patch && updated.status !== before.status) {
+      await writeActivityEvent(tx, {
+        projectId: updated.projectId,
+        actorUserId: userId,
+        eventType: updated.status === "Done" ? "task.completed" : "task.status_changed",
+        entityType: "TASK",
+        entityId: updated.id,
+        payload: {
+          title: updated.title,
+          statusFrom: before.status,
+          statusTo: updated.status,
+          assigneeName: updated.assignee?.name ?? null,
+        },
+      });
+    }
+    return updated;
   });
   await indexEntity({ entityType: "TASK", entityId: task.id, projectId: task.projectId, title: task.title, body: task.description });
   return task;
@@ -88,10 +151,42 @@ export async function updateTask(userId: string, id: string, data: Record<string
 
 export async function batchUpdateTasks(userId: string, ids: string[], patch: Record<string, unknown>) {
   if (!ids.length) throw new ApiError(400, "未选择任务");
-  const results = [];
-  for (const id of ids) {
-    results.push(await updateTask(userId, id, patch));
-  }
+  if (patch.status && !TASK_STATUSES.includes(patch.status as TaskStatus)) throw new ApiError(400, `非法任务状态：${patch.status}`);
+  const data = buildTaskPatch(patch);
+  const results = await prisma.$transaction(async (tx) => {
+    const tasks = await tx.task.findMany({ where: { id: { in: ids } } });
+    if (tasks.length !== new Set(ids).size) throw new ApiError(400, "任务列表包含不存在的任务");
+    const projectIds = new Set(tasks.map((task) => task.projectId));
+    if (projectIds.size !== 1) throw new ApiError(400, "禁止跨项目批量更新任务");
+    const projectId = tasks[0].projectId;
+    await validateTaskReferences(tx, projectId, patch);
+    const updated = [];
+    for (const before of tasks) {
+      updated.push(await tx.task.update({ where: { id: before.id }, data, include: taskInclude }));
+      await writeAudit({
+        userId, action: "status" in data ? "STATUS_CHANGE" : "UPDATE", entityType: "TASK", entityId: before.id,
+        diff: { before: { status: before.status, title: before.title }, after: data },
+      }, tx);
+      const current = updated.at(-1)!;
+      if ("status" in data && current.status !== before.status) {
+        await writeActivityEvent(tx, {
+          projectId: current.projectId,
+          actorUserId: userId,
+          eventType: current.status === "Done" ? "task.completed" : "task.status_changed",
+          entityType: "TASK",
+          entityId: current.id,
+          payload: {
+            title: current.title,
+            statusFrom: before.status,
+            statusTo: current.status,
+            assigneeName: current.assignee?.name ?? null,
+          },
+        });
+      }
+    }
+    return updated;
+  });
+  for (const task of results) await indexEntity({ entityType: "TASK", entityId: task.id, projectId: task.projectId, title: task.title, body: task.description });
   return results;
 }
 

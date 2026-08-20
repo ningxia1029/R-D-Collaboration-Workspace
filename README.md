@@ -1,91 +1,103 @@
 # PLM 研发协同平台
 
-公司级轻量级 **PLM + 项目管理 + 工程知识库** 一体化平台，面向软硬件协同研发团队。
-基于《个人项目管理应用开发文档》的架构与数据模型扩展为公司级多角色系统。
+面向软硬件协同研发团队的轻量级 PLM、项目管理与工程知识库工作台。
 
-## 功能总览
+## 当前能力
 
-| 模块 | 能力 |
-|---|---|
-| Dashboard 大盘 | 统计卡片（在研项目/待办阻塞/物料延迟/近7天ECO/知识库活跃度）、项目健康度 🟢🟡🔴、未来14天 Deadline 时间轴、变更统计 |
-| 项目管理 | 立项与计划、WBS 父子任务、看板/表格/甘特三视图、FS 依赖连线（检环）、里程碑、工时登记、成员负载视图 |
-| PLM | 产品结构树（产品→部件→物料）、跨项目物料库、产品版本历史、生命周期阶段流转（概念/研发/试产/量产/停产，含守卫规则） |
-| BOM 跟踪 | 齐套率实时计算（100% 高亮「具备装配条件」）、Delayed 卡脖子物料自动 Block 组装任务并可自动恢复、CSV/Excel 导入（字段映射）、CSV 导出 |
-| 技术参数库 | Target vs Actual 自动判定 🟢/🔴（gte/lte/eq）、Markdown + Mermaid 状态机/流程图、固件版本绑定 |
-| 工程变更 | ECR（申请→提交→审批）→ ECO（草稿→审批→实施→关闭）两级流转、自动递增单号（ECO-2026-001）、影响面追溯、垂直时间轴、Markdown 变更报告导出 |
-| 工程知识库 | 分类与标签、文档版本历史、FTS5 全文检索（Ctrl+K 全局穿透 任务/MPN/参数/ECO/文档） |
-| 权限体系 | RBAC：系统管理员/项目经理/研发工程师/访客，模块级权限点 + 项目级数据权限（ProjectMember，可项目内覆盖角色） |
-| 审计 | 全量操作审计日志（含自动 Block/恢复联动记录） |
+- 项目与任务：WBS、看板/表格/甘特、依赖检环、里程碑、工时与资源负载。
+- PLM 与 BOM：产品结构、物料主数据、版本、齐套率、关键物料延迟联动。
+- 工程变更：ECR → ECO 状态机、影响范围、审批记录与审计。
+- 知识库：Markdown/Mermaid、版本历史、项目范围搜索。
+- 权限：NextAuth、全局 RBAC、项目成员角色覆盖和实体级项目归属校验。
+- 研发智能体：独立 LangGraph Worker、只读 Tool Gateway、Run/SSE 工作台、版本化文档片段与活动事件周报，以及经人工确认的低风险任务字段更新；生产门禁仍未完成。
 
-## 技术栈
+## 安全的本地开发
 
-- Next.js 14 (App Router) + React 18 + TypeScript + Ant Design 5
-- Prisma ORM + **PostgreSQL（Neon 云端，免费档）**；SQLite 仅用于开发备选
-- NextAuth v5（Credentials + JWT）、bcryptjs
-- Electron 31（桌面壳，`output: standalone` 内嵌 Next 服务）+ electron-builder（portable 便携版）
-- dnd-kit（看板拖拽）、frappe-gantt（甘特）、mermaid（流程图/状态机）、@uiw/react-md-editor + react-markdown、recharts、papaparse + SheetJS
+要求 Node.js 22–26、PostgreSQL 和独立的开发数据库。
 
-## 交付形态
-
-### A. 桌面便携版（推荐给终端用户）
-- 产物：`dist/PLM平台-<版本>-便携版.exe`（约 135MB，**免安装、双击即用**）
-- 数据：**云端共享**——所有客户端连接同一 Neon PostgreSQL（多人实时协作）
-- 更新：启动时自动检查 **GitHub Releases**，发现新版本提示下载并重启替换（国内自动走 ghproxy 镜像加速）
-- 构建：`npm run build:desktop`（含 next build + electron-builder 打包）
-
-### B. 浏览器版（开发/演示）
-```bash
-npm install          # 安装依赖（自动 prisma generate）
-npm run setup        # 初始化云端数据库表结构 + 写入演示数据
-npm run dev          # 启动 http://localhost:3000
+```powershell
+npm ci
+npm audit --audit-level=high
+npm run typecheck -- --incremental false
+npm run test
+npm run agent:eval
+npm run dev
 ```
 
-> 数据库：`.env` 的 `DATABASE_URL` 指向 Neon PostgreSQL（新加坡节点）。重置演示数据：`npm run setup`。
+必须通过环境变量提供 `DATABASE_URL` 与高强度 `AUTH_SECRET`。`.env` 不得提交。`npm run setup` 会执行 seed，只允许用于可丢弃的演示库，严禁对现有业务库运行。
 
-> **排障**：若写入报 `attempt to write a readonly database`（多见于沙箱/杀毒环境句柄占用），停掉所有 node 进程后重跑 `npm run setup` 与 `npm run dev`，或将项目复制到其他磁盘再运行。正常开发机按上述命令即可直接使用。
+数据库迁移、备份与恢复见 `docs/DATABASE_OPERATIONS.md`。
 
-### 演示账号（密码均为 `Demo@123456`）
+## 研发智能体进程
 
-| 账号 | 角色 | 权限概要 |
-|---|---|---|
-| admin@demo.com | 系统管理员 | 全部权限 + 用户管理 + 审计日志 |
-| pm@demo.com | 项目经理 | 项目/任务/变更审批/PLM 管理 |
-| eng@demo.com | 研发工程师 | 本人任务、BOM/参数/知识库编辑、ECR 提交 |
-| guest@demo.com | 访客 | 各模块只读 + BOM 导出 |
+复制 `.env.agent.example` 中的配置到受保护环境。Web、Agent Worker 与文档索引器是三个独立职责：
 
-## 演示数据亮点
-
-- **TH-100 智能温控器**（EVT 阶段）：2 颗 Delayed 卡脖子物料（ESP32 模组、SHT31 传感器）已自动 Block「样机贴片组装」任务——把物料状态改为 Arrived 可观察任务自动恢复；齐套率约 70%。
-- ECO-2026-001（PCB V1.0→V1.1 已实施）、ECR-2026-001（待审批，可走完整 ECR→ECO 流转）。
-- 知识库 5 篇含 Mermaid 状态机与代码块，Ctrl+K 可全文检索正文。
-- GW-20 BLE 网关项目用于验证多项目与项目级数据权限（guest 仅可见 TH-100）。
-
-## 快捷键
-
-| 快捷键 | 功能 |
-|---|---|
-| Ctrl/Cmd + K | 全局搜索（穿透 任务/BOM MPN/技术参数/ECO 单号/知识库） |
-| Ctrl/Cmd + N | 新建任务 / 新建物料（在对应页面） |
-| Space | 表格视图勾选聚焦行（批量更新） |
-
-## 目录结构
-
-```
-prisma/            schema.prisma（24 表，原文档 6 表名原样保留）+ seed.ts
-desktop/           Electron 壳：main.js（启动内置 server/窗口/托盘/更新）、updater.js（GitHub 在线更新）、electron-builder.yml
-scripts/           build-desktop.mjs（一键打包便携版）、release.mjs（发布 GitHub Release）
-src/
-  app/             页面（(auth)/login、(main)/dashboard|projects|plm|knowledge|resources|admin）+ api/ 路由
-  components/      layout / tasks / bom / common 等 UI 组件
-  lib/
-    constants.ts   全部枚举与权限矩阵（应用层约束）
-    rbac.ts        requireAuth / requirePerm / 项目级数据权限
-    services/      业务规则层（齐套率、联动 Block、ECR/ECO 状态机、生命周期机、搜索…）
+```powershell
+npm run dev
+npm run agent:worker
+npm run agent:knowledge-indexer
 ```
 
-## 发版流程（在线更新）
+真实模型预验收使用独立脱敏数据集，默认只跑 8 条 smoke；完整模式为 30 条 × 3 次。API Key 只能通过当前进程或 Secret Manager 注入，不得写入仓库：
 
-1. 改 `package.json` version → `npm run build:desktop` 产出 `dist/PLM平台-<版本>-便携版.exe`
-2. `node scripts/release.mjs`（自动打 tag、推 GitHub、发布 Release，更新器即可检测到）
+```powershell
+$env:AGENT_MODEL_PROVIDER = "openai-compatible"
+$env:AGENT_MODEL_BASE_URL = "https://api.deepseek.com"
+$env:AGENT_MODEL_NAME = "deepseek-v4-flash"
+$env:AGENT_MODEL_THINKING = "disabled"
+npm run agent:eval:live
+npm run agent:eval:live -- --full
+```
 
-> 搜索实现：云端 PostgreSQL 环境自动降级为 LIKE 模糊检索（中文子串匹配正常）；如启用原生全文可自行扩展 `lib/services/searchService.ts`。
+完整报告只保存 case ID、决策类型、Tool 名、参数键、失败分类、延迟、token 和成本，不保存问题、回答、Tool 参数值或推理内容。详见 [模型切换手册](./docs/agent-operations/MODEL_SWITCH.md)。
+
+首次部署阶段 5 索引前，先完成备份、迁移和目标库确认，再按 [知识片段迁移说明](./docs/agent-migrations/20260813_AGENT_KNOWLEDGE_CHUNKS.md) 受控执行一次 `--backfill --once`。不要把本地 fake provider、验收数据库命令或 `npm run setup` 用于生产。
+
+启用受控 Action Agent 还必须配置独立的 `AGENT_ACTION_APPROVAL_SECRET`。最终执行接口不暴露给模型；动作协议、风险边界和迁移步骤见 [Action Tool Contract](./docs/PLM_ACTION_TOOL_CONTRACT_V1.md) 与 [迁移说明](./docs/agent-migrations/20260813_AGENT_ACTION_CONTROL.md)。
+
+## 桌面版
+
+桌面客户端默认只加载 HTTPS 服务端，通过构建环境变量配置：
+
+```powershell
+$env:PLM_SERVER_URL = "https://plm.example.com"
+$env:PLM_UPDATE_FEED = "https://github.com/ningxia1029/R-D-Collaboration-Workspace/releases/latest"
+npm run build:desktop
+```
+
+桌面产物不内嵌数据库连接串或认证密钥。构建输出采用固定英文名：
+
+- `PLM-Workspace-v<version>-portable.exe`
+- `PLM-Workspace-v<version>-green.zip`
+- `SHA256SUMS.txt`
+- `BUILD-PROVENANCE.json`（源码提交、工作树状态、构建时间与产物哈希）
+
+未在构建时设置 `PLM_SERVER_URL` 时，首次启动会打开配置页，要求输入管理员提供的 HTTPS 工作台地址；没有已部署的服务端时，客户端只能完成安装包与配置页验收，不能完成业务登录验收。
+
+更新器只从 GitHub Release 下载，并在提示用户打开新包前验证 SHA-256。当前采用安全的手动切换包策略，不对正在运行的便携外壳做原地覆盖。
+
+## 验证与发布
+
+```powershell
+npm audit --audit-level=high
+npm run test
+npm run typecheck -- --incremental false
+npx prisma validate
+npm run agent:eval
+npm run agent:eval:live
+npm run agent:benchmark
+npm run build
+npm run standalone:prepare
+npm run test:e2e
+```
+
+CI 设计为在 Ubuntu/Node 24 执行质量与 PostgreSQL 16 恢复门禁，并在 Windows 生成未签名桌面 smoke 产物。工作流已配置，但只有 GitHub Actions 实际运行成功后才能作为远端 CI 证据。`npm run release -- <x.y.z>` 会创建 tag、推送并发布资产，属于外部写操作，只能在评审通过且明确授权后运行。
+
+## 当前发布门禁
+
+- 2026-08-13 本地 `npm audit` 与生产依赖审计均为 0，但远端 CI 尚未实跑。
+- 隔离 PostgreSQL 14.23 已完成 9/9 migration、备份恢复与零 drift；仍需在 PostgreSQL 16 预生产环境复验。
+- Chromium 桌面/移动未登录安全门禁通过；企业 IdP、真实模型、真实 HTTPS/TLS、SIEM 与代表性端到端性能仍待验收。
+- 当前桌面 smoke 包未签名，工作树非干净提交；必须完成两个签名版本的升级/回滚与用户签署，发布脚本才允许执行。
+
+完整清单见 [阶段 8 生产验收矩阵](./docs/agent-operations/PRODUCTION_ACCEPTANCE.md)，部署与处置步骤见 [运行手册索引](./docs/agent-operations/README.md)。

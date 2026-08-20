@@ -28,8 +28,8 @@ const COLUMN_COLORS: Record<string, string> = {
   Done: "#52c41a",
 };
 
-function KanbanCard({ task, onClick, overlay }: { task: TaskItem; onClick?: () => void; overlay?: boolean }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id });
+function KanbanCard({ task, onClick, overlay, canDrag = true }: { task: TaskItem; onClick?: () => void; overlay?: boolean; canDrag?: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id, disabled: !canDrag });
   const overdue = task.dueDate && task.status !== "Done" && dayjs(task.dueDate).isBefore(dayjs(), "day");
   return (
     <Card
@@ -38,7 +38,7 @@ function KanbanCard({ task, onClick, overlay }: { task: TaskItem; onClick?: () =
       className={isDragging ? "kanban-card-dragging" : undefined}
       style={{
         marginBottom: 8,
-        cursor: "grab",
+        cursor: canDrag ? "grab" : "pointer",
         transform: CSS.Translate.toString(transform),
         opacity: overlay ? 0.95 : undefined,
         borderLeft: `3px solid ${COLUMN_COLORS[task.status] ?? "#ddd"}`,
@@ -66,7 +66,7 @@ function KanbanCard({ task, onClick, overlay }: { task: TaskItem; onClick?: () =
   );
 }
 
-function KanbanColumn({ status, tasks, onCardClick }: { status: string; tasks: TaskItem[]; onCardClick: (t: TaskItem) => void }) {
+function KanbanColumn({ status, tasks, onCardClick, canEditTask }: { status: string; tasks: TaskItem[]; onCardClick: (t: TaskItem) => void; canEditTask: (task: TaskItem) => boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   return (
     <div
@@ -86,7 +86,7 @@ function KanbanColumn({ status, tasks, onCardClick }: { status: string; tasks: T
         <Typography.Text type="secondary">{tasks.length}</Typography.Text>
       </div>
       {tasks.map((t) => (
-        <KanbanCard key={t.id} task={t} onClick={() => onCardClick(t)} />
+        <KanbanCard key={t.id} task={t} onClick={() => onCardClick(t)} canDrag={canEditTask(t)} />
       ))}
     </div>
   );
@@ -96,9 +96,10 @@ interface Props {
   tasks: TaskItem[];
   onCardClick: (task: TaskItem) => void;
   onChanged: () => void;
+  canEditTask: (task: TaskItem) => boolean;
 }
 
-export default function KanbanBoard({ tasks, onCardClick, onChanged }: Props) {
+export default function KanbanBoard({ tasks, onCardClick, onChanged, canEditTask }: Props) {
   const [active, setActive] = useState<TaskItem | null>(null);
   const { message } = App.useApp();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -114,7 +115,7 @@ export default function KanbanBoard({ tasks, onCardClick, onChanged }: Props) {
     if (!over) return;
     const newStatus = String(over);
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.status === newStatus || !TASK_STATUSES.includes(newStatus as never)) return;
+    if (!task || !canEditTask(task) || task.status === newStatus || !TASK_STATUSES.includes(newStatus as never)) return;
     try {
       await patch(`/api/tasks/${taskId}`, { status: newStatus });
       onChanged();
@@ -127,7 +128,7 @@ export default function KanbanBoard({ tasks, onCardClick, onChanged }: Props) {
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
         {TASK_STATUSES.map((status) => (
-          <KanbanColumn key={status} status={status} tasks={tasks.filter((t) => t.status === status)} onCardClick={onCardClick} />
+          <KanbanColumn key={status} status={status} tasks={tasks.filter((t) => t.status === status)} onCardClick={onCardClick} canEditTask={canEditTask} />
         ))}
       </div>
       <DragOverlay>{active ? <KanbanCard task={active} overlay /> : null}</DragOverlay>

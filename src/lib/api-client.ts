@@ -1,9 +1,20 @@
 // 前端 fetch 封装
 export async function api<T = unknown>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-  });
+  const controller = options?.signal ? null : new AbortController();
+  const timeout = controller ? window.setTimeout(() => controller.abort(), 20_000) : null;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      signal: options?.signal ?? controller?.signal,
+      headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
+    });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") throw new Error("请求超过 20 秒，请检查网络或服务器连接");
+    throw error;
+  } finally {
+    if (timeout !== null) window.clearTimeout(timeout);
+  }
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`;
     try {

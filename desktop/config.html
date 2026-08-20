@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>配置 PLM 服务</title>
+  <style>
+    body { margin: 0; font-family: "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; }
+    main { padding: 44px; }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    p { color: #667085; line-height: 1.7; }
+    label { display: block; margin: 28px 0 8px; font-weight: 600; }
+    input { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; }
+    button { margin-top: 18px; padding: 10px 22px; border: 0; border-radius: 8px; background: #1677ff; color: white; font-size: 15px; cursor: pointer; }
+    #message { margin-left: 12px; color: #cf1322; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>连接公司 PLM 服务</h1>
+    <p>桌面客户端不保存数据库密码。请输入管理员提供的 HTTPS 工作台地址，配置保存到当前 Windows 用户目录。</p>
+    <label for="serverUrl">HTTPS 服务地址</label>
+    <input id="serverUrl" type="url" placeholder="https://plm.example.com" autocomplete="url">
+    <button id="save" type="button">测试连接并保存</button><span id="message"></span>
+  </main>
+  <script>
+    const input = document.getElementById("serverUrl");
+    const save = document.getElementById("save");
+    window.plmConfig.getServerConfig().then((config) => { input.value = config.serverUrl || ""; });
+    save.addEventListener("click", async () => {
+      const message = document.getElementById("message");
+      save.disabled = true;
+      message.textContent = "正在测试连接…";
+      const result = await window.plmConfig.saveServerUrl(input.value);
+      save.disabled = false;
+      message.textContent = result.ok ? "配置成功，正在重启…" : result.message;
+    });
+  </script>
+</body>
+</html>

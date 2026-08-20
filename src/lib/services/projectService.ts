@@ -1,30 +1,41 @@
 // 项目服务 + 生命周期阶段机
 import { prisma } from "@/lib/prisma";
-import { ApiError, visibleProjectIds, type SessionUser } from "@/lib/rbac";
+import { ApiError, type SessionUser } from "@/lib/rbac";
 import { writeAudit } from "@/lib/audit";
-import { LIFECYCLE_STAGES, type LifecycleStage } from "@/lib/constants";
+import { LIFECYCLE_STAGES, PROJECT_STATUSES, type LifecycleStage } from "@/lib/constants";
 import { getKitRate } from "@/lib/services/bomService";
 
 export async function listProjects(user: SessionUser) {
-  const ids = await visibleProjectIds(user);
-  const projects = await prisma.project.findMany({
-    where: ids === null ? {} : { id: { in: ids } },
-    include: {
-      owner: { select: { id: true, name: true } },
-      product: { select: { id: true, name: true, code: true } },
-      _count: { select: { tasks: true, bomItems: true, changeLogs: true, members: true } },
-    },
-    orderBy: { updatedAt: "desc" },
+  const projectScope = user.roleName === "admin"
+    ? {}
+    : { members: { some: { userId: user.id } } };
+  const taskScope = user.roleName === "admin"
+    ? {}
+    : { project: { members: { some: { userId: user.id } } } };
+
+  // 项目列表与完成任务统计并行查询，避免“成员列表 + 项目 + 每项目一次 count”的 N+1 云数据库往返。
+  const [projects, doneRows] = await Promise.all([
+    prisma.project.findMany({
+      where: projectScope,
+      include: {
+        owner: { select: { id: true, name: true } },
+        product: { select: { id: true, name: true, code: true } },
+        _count: { select: { tasks: true, bomItems: true, changeLogs: true, members: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    }),
+    prisma.task.groupBy({
+      by: ["projectId"],
+      where: { ...taskScope, status: "Done" },
+      _count: { _all: true },
+    }),
+  ]);
+  const doneByProject = new Map(doneRows.map((row) => [row.projectId, row._count._all]));
+  return projects.map((project) => {
+    const total = project._count.tasks;
+    const done = doneByProject.get(project.id) ?? 0;
+    return { ...project, progress: total === 0 ? 0 : Math.round((done / total) * 100) };
   });
-  // 每个项目的进度（任务完成率）
-  const withProgress = await Promise.all(
-    projects.map(async (p) => {
-      const done = await prisma.task.count({ where: { projectId: p.id, status: "Done" } });
-      const total = p._count.tasks;
-      return { ...p, progress: total === 0 ? 0 : Math.round((done / total) * 100) };
-    })
-  );
-  return withProgress;
 }
 
 export async function createProject(userId: string, data: Record<string, unknown>) {
@@ -47,6 +58,9 @@ export async function createProject(userId: string, data: Record<string, unknown
 }
 
 export async function updateProject(userId: string, id: string, data: Record<string, unknown>) {
+  if (data.status && !PROJECT_STATUSES.includes(data.status as (typeof PROJECT_STATUSES)[number])) {
+    throw new ApiError(400, `非法项目状态：${String(data.status)}`);
+  }
   const patch: Record<string, unknown> = {};
   for (const f of ["name", "description", "status", "productId"]) if (f in data) patch[f] = data[f];
   if ("startDate" in data) patch.startDate = data.startDate ? new Date(data.startDate as string) : null;

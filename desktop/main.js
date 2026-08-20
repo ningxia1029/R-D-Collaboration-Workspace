@@ -5,25 +5,29 @@
 // 防御：若环境残留 ELECTRON_RUN_AS_NODE，本进程会退化成纯 Node，导致 require('electron') 失效
 delete process.env.ELECTRON_RUN_AS_NODE;
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, Tray, Menu, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const net = require("net");
+const https = require("https");
 const os = require("os");
 
 const APP_NAME = "PLM研发协同平台";
 const DEFAULT_PORT = 43123;
+// 在注册 ready 工作前先取得单实例锁，避免两个便携包同时解压后各自启动窗口/服务。
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
 
 // ============ 运行配置（构建时注入 builtin-env.json，用户可覆盖） ============
 function loadConfig() {
   const cfg = {
     port: DEFAULT_PORT,
-    databaseUrl: "",
-    authSecret: "",
-    updateFeed: "", // 阶段3：GitHub Releases 地址
+    serverUrl: "",
+    updateFeed: "",
+    allowLocalServer: false,
   };
-  // 1) 构建时内置配置（随 exe 分发，含默认云端连接串）
+  // 1) 构建时内置公开配置（只允许服务地址/更新源，不包含数据库与认证密钥）
   for (const base of [app.getAppPath(), path.join(app.getAppPath(), "..")]) {
     for (const sub of ["", "desktop"]) {
       try {
@@ -84,8 +88,9 @@ async function startServer(cfg) {
       NODE_ENV: "production",
       PORT: String(port),
       HOSTNAME: "127.0.0.1",
-      DATABASE_URL: cfg.databaseUrl,
-      AUTH_SECRET: cfg.authSecret || "plm-desktop-default-secret",
+      // 本地服务仅用于显式开发模式，凭据必须来自启动环境，绝不随安装包分发。
+      DATABASE_URL: process.env.DATABASE_URL || "",
+      AUTH_SECRET: process.env.AUTH_SECRET || "",
       AUTH_TRUST_HOST: "true",
       NEXT_TELEMETRY_DISABLED: "1",
     },
@@ -96,8 +101,8 @@ async function startServer(cfg) {
   const logPath = path.join(app.getPath("userData"), "server.log");
   try {
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
-  proc.stdout.pipe(logStream);
-  proc.stderr.pipe(logStream);
+    proc.stdout.pipe(logStream);
+    proc.stderr.pipe(logStream);
   } catch { /* 日志不可写则忽略 */ }
   proc.on("error", (e) => console.error("[plm-main] server spawn error:", e.message));
   proc.on("exit", (code) => {
@@ -130,9 +135,41 @@ function isPortOpen(port) {
 
 // ============ 窗口与托盘 ============
 let mainWindow = null;
+let configWindow = null;
 let tray = null;
 
+function showConfigWindow() {
+  if (configWindow && !configWindow.isDestroyed()) {
+    configWindow.show();
+    configWindow.focus();
+    return;
+  }
+  const quitOnClose = !mainWindow || mainWindow.isDestroyed();
+  configWindow = new BrowserWindow({
+    width: 620,
+    height: 420,
+    resizable: false,
+    title: `${APP_NAME} - 首次配置`,
+    webPreferences: {
+      preload: path.join(__dirname, "config-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  configWindow.setMenuBarVisibility(false);
+  configWindow.on("closed", () => {
+    configWindow = null;
+    if (quitOnClose && !app.isQuitting) {
+      app.isQuitting = true;
+      app.quit();
+    }
+  });
+  configWindow.loadFile(path.join(__dirname, "config.html"));
+}
+
 function createWindow(url) {
+  const allowedOrigin = new URL(url).origin;
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -144,9 +181,42 @@ function createWindow(url) {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (target.startsWith("https://")) shell.openExternal(target);
+    return { action: "deny" };
+  });
+  mainWindow.webContents.on("will-navigate", (event, target) => {
+    if (new URL(target).origin !== allowedOrigin) {
+      event.preventDefault();
+      if (target.startsWith("https://")) shell.openExternal(target);
+    }
+  });
+  let handlingLoadFailure = false;
+  mainWindow.webContents.on("did-fail-load", async (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 || handlingLoadFailure || app.isQuitting) return;
+    handlingLoadFailure = true;
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "无法连接 PLM 服务",
+      message: "服务器地址不可用或网络连接失败。",
+      detail: `${errorDescription}（${errorCode}）`,
+      buttons: ["重试", "重新配置服务器"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    handlingLoadFailure = false;
+    if (result.response === 0) {
+      mainWindow?.reload();
+    } else {
+      mainWindow?.destroy();
+      mainWindow = null;
+      showConfigWindow();
+    }
+  });
   mainWindow.loadURL(url);
   mainWindow.on("close", (e) => {
     if (!app.isQuitting) {
@@ -165,7 +235,8 @@ function createTray() {
   }
   const menu = Menu.buildFromTemplate([
     { label: "打开主界面", click: () => { mainWindow?.show(); mainWindow?.focus(); } },
-    { label: "检查更新", click: () => { ipcMain.emit("check-update"); } },
+    { label: "检查更新", click: () => { updateService?.checkAndPrompt(); } },
+    { label: "服务器设置", click: () => showConfigWindow() },
     { type: "separator" },
     { label: "退出", click: () => { app.isQuitting = true; app.quit(); } },
   ]);
@@ -177,7 +248,7 @@ function createTray() {
 // ============ 更新（阶段3 接入 GitHub Releases） ============
 let updateService = null;
 ipcMain.handle("app:check-update", async () => {
-  if (updateService) return updateService.check();
+  if (updateService) return updateService.checkAndPrompt();
   return { ok: false, message: "更新模块未启用" };
 });
 ipcMain.handle("app:get-info", () => ({
@@ -185,6 +256,40 @@ ipcMain.handle("app:get-info", () => ({
   appPath: app.getAppPath(),
   userData: app.getPath("userData"),
 }));
+ipcMain.handle("app:get-server-config", () => ({ serverUrl: loadConfig().serverUrl || "" }));
+
+function checkServerReachable(serverUrl) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(serverUrl, { timeout: 10000 }, (res) => {
+      res.resume();
+      if ((res.statusCode || 500) < 500) resolve();
+      else reject(new Error(`服务返回 HTTP ${res.statusCode}`));
+    });
+    req.on("error", reject);
+    req.setTimeout(10000, () => req.destroy(new Error("连接超时")));
+  });
+}
+
+ipcMain.handle("app:save-server-config", async (_event, rawUrl) => {
+  const serverUrl = String(rawUrl ?? "").trim().replace(/\/$/, "");
+  let parsed;
+  try { parsed = new URL(serverUrl); } catch { return { ok: false, message: "请输入有效的 HTTPS 地址" }; }
+  if (parsed.protocol !== "https:" || !parsed.hostname) return { ok: false, message: "服务地址必须使用 HTTPS" };
+  try {
+    await checkServerReachable(serverUrl);
+  } catch (error) {
+    return { ok: false, message: `无法连接该服务：${error.message}` };
+  }
+  const configPath = path.join(app.getPath("userData"), "config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({ serverUrl, allowLocalServer: false }, null, 2), "utf8");
+  setTimeout(() => {
+    app.relaunch();
+    app.isQuitting = true;
+    app.quit();
+  }, 200);
+  return { ok: true };
+});
 
 // ============ 生命周期 ============
 // 软件渲染：兼容远程桌面/虚拟机/无独显环境。
@@ -193,19 +298,37 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("disable-gpu-compositing");
 app.commandLine.appendSwitch("in-process-gpu");
-app.whenReady().then(async () => {
+if (gotLock) app.whenReady().then(async () => {
   const cfg = loadConfig();
-  const started = await startServer(cfg);
-  if (!started) return;
-  app.__serverProc = started.proc;
-  createWindow(started.url);
+  let started = null;
+  let appUrl = "";
+  if (typeof cfg.serverUrl === "string" && /^https:\/\//i.test(cfg.serverUrl)) {
+    appUrl = cfg.serverUrl.replace(/\/$/, "");
+  } else if (cfg.allowLocalServer === true) {
+    if (!process.env.DATABASE_URL || !process.env.AUTH_SECRET) {
+      dialog.showErrorBox(APP_NAME, "本地开发模式需要通过启动环境提供 DATABASE_URL 与 AUTH_SECRET。");
+      app.quit();
+      return;
+    }
+    started = await startServer(cfg);
+    if (!started) return;
+    app.__serverProc = started.proc;
+    appUrl = started.url;
+  } else {
+    showConfigWindow();
+    return;
+  }
+  createWindow(appUrl);
   createTray();
 
-  // 阶段3：注册更新服务（GitHub Releases + portable 替换式更新器）
+  // 阶段3：注册更新服务（GitHub Releases + SHA-256 校验 + 手动切换新包）
   try {
     const { registerUpdater } = require("./updater");
-    updateService = registerUpdater({ app, mainWindow, cfg, getServer: () => started });
-  } catch { /* 更新模块未就绪时静默跳过 */ }
+    updateService = registerUpdater({ app, mainWindow, cfg });
+    setTimeout(() => updateService?.checkAndPrompt({ silentWhenCurrent: true }), 5000);
+  } catch (error) {
+    console.error("[plm-main] 更新模块初始化失败:", error);
+  }
 });
 
 app.on("before-quit", () => {
@@ -217,11 +340,8 @@ app.on("before-quit", () => {
 });
 app.on("window-all-closed", () => { /* 托盘常驻，不退出 */ });
 
-// 单实例：避免重复启动
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
+// 第二次启动时只激活已经运行的窗口。
+if (gotLock) {
   app.on("second-instance", () => {
     if (mainWindow) { mainWindow.show(); mainWindow.focus(); }
   });

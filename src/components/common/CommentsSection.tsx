@@ -12,7 +12,7 @@ interface Comment {
 }
 
 /** 通用评论区（任务 / ECO / ECR / 文档） */
-export default function CommentsSection({ entityType, entityId }: { entityType: string; entityId: string }) {
+export default function CommentsSection({ entityType, entityId, readOnly = false }: { entityType: string; entityId: string; readOnly?: boolean }) {
   const { message } = App.useApp();
   const [comments, setComments] = useState<Comment[]>([]);
   const [text, setText] = useState("");
@@ -61,10 +61,14 @@ export default function CommentsSection({ entityType, entityId }: { entityType: 
           </List.Item>
         )}
       />
-      <Space.Compact style={{ width: "100%", marginTop: 8 }}>
-        <Input placeholder="写下评论…" value={text} onChange={(e) => setText(e.target.value)} onPressEnter={send} />
-        <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} />
-      </Space.Compact>
+      {readOnly ? (
+        <Typography.Text type="secondary">当前角色仅可查看评论</Typography.Text>
+      ) : (
+        <Space.Compact style={{ width: "100%", marginTop: 8 }}>
+          <Input placeholder="写下评论…" value={text} onChange={(e) => setText(e.target.value)} onPressEnter={send} />
+          <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={send} />
+        </Space.Compact>
+      )}
     </div>
   );
 }

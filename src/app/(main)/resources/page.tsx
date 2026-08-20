@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, Table, App, Typography, Select, Space, Progress } from "antd";
+import { Card, Table, App, Typography, Select, Space, Alert } from "antd";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { get } from "@/lib/api-client";
 
 interface Workload {
-  user: { id: string; name: string; email: string };
+  user: { id: string; name: string };
   estimatedHours: number;
   loggedHours: number;
   openTasks: number;
@@ -35,8 +35,8 @@ export default function ResourcesPage() {
 
   const chartData = data.map((w) => ({
     name: w.user.name,
-    预估工时: w.estimatedHours,
-    已登记工时: w.loggedHours,
+    开放任务预估存量: w.estimatedHours,
+    历史登记工时: w.loggedHours,
   }));
 
   return (
@@ -58,6 +58,12 @@ export default function ResourcesPage() {
           </Space>
         }
       >
+        <Alert
+          type="info"
+          showIcon
+          message="本页对照开放任务预估存量与历史登记工时，不代表时间窗利用率；缺少发布计划或产能时不得推断利用率。"
+          style={{ marginBottom: 12 }}
+        />
         <div style={{ height: 280 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData}>
@@ -65,8 +71,8 @@ export default function ResourcesPage() {
               <YAxis unit="h" />
               <Tooltip />
               <Legend />
-              <Bar dataKey="预估工时" fill="#1677ff" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="已登记工时" fill="#52c41a" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="开放任务预估存量" fill="#1677ff" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="历史登记工时" fill="#52c41a" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -80,17 +86,10 @@ export default function ResourcesPage() {
           dataSource={data}
           pagination={false}
           columns={[
-            { title: "成员", render: (_, r) => <Space direction="vertical" size={0}><span>{r.user.name}</span><Typography.Text type="secondary" style={{ fontSize: 12 }}>{r.user.email}</Typography.Text></Space> },
+            { title: "成员", render: (_, r) => <span>{r.user.name}</span> },
             { title: "进行中任务", dataIndex: "openTasks", width: 110, align: "right" },
-            { title: "预估工时 (h)", dataIndex: "estimatedHours", width: 130, align: "right" },
-            { title: "已登记工时 (h)", dataIndex: "loggedHours", width: 140, align: "right" },
-            {
-              title: "投入度", width: 220,
-              render: (_, r) => {
-                const pct = r.estimatedHours > 0 ? Math.min(100, Math.round((r.loggedHours / r.estimatedHours) * 100)) : 0;
-                return <Progress percent={pct} size="small" />;
-              },
-            },
+            { title: "开放任务预估存量 (h)", dataIndex: "estimatedHours", width: 190, align: "right" },
+            { title: "历史登记工时 (h)", dataIndex: "loggedHours", width: 160, align: "right" },
           ]}
         />
       </Card>

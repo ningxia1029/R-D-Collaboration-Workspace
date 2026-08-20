@@ -11,6 +11,8 @@ export default {
         token.userId = user.id as string;
         token.roleId = (user as { roleId?: string }).roleId ?? "";
         token.roleName = (user as { roleName?: string }).roleName ?? "";
+        token.mustChangePassword = (user as { mustChangePassword?: boolean }).mustChangePassword ?? false;
+        token.sessionVersion = (user as { sessionVersion?: number }).sessionVersion ?? 0;
       }
       return token;
     },
@@ -19,6 +21,8 @@ export default {
         session.user.id = (token.userId as string) ?? "";
         session.user.roleId = (token.roleId as string) ?? "";
         session.user.roleName = (token.roleName as string) ?? "";
+        session.user.mustChangePassword = token.mustChangePassword === true;
+        session.user.sessionVersion = typeof token.sessionVersion === "number" ? token.sessionVersion : 0;
       }
       return session;
     },

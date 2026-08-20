@@ -15,7 +15,8 @@ function MermaidBlock({ code }: { code: string }) {
     import("mermaid").then(async (mod) => {
       if (cancelled || !ref.current) return;
       const mermaid = mod.default;
-      mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
+      // Mermaid 的 strict 模式会隔离图中的 HTML/链接，避免知识库正文注入可执行内容。
+      mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict" });
       try {
         const { svg } = await mermaid.render(`mmd-${++mermaidId}`, code);
         if (!cancelled && ref.current) ref.current.innerHTML = svg;

@@ -14,6 +14,7 @@ export interface TaskItem {
   estimatedHours?: number | null;
   isMilestone: boolean;
   sortOrder: number;
+  createdBy?: string | null;
   assignee?: { id: string; name: string } | null;
   phase?: { id: string; phaseName: string } | null;
   eco?: { id: string; ecoNumber: string } | null;

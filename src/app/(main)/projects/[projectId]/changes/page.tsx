@@ -4,19 +4,20 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Card, Tabs, Timeline, Tag, Button, Space, App, Modal, Form, Input, Select, Table, Popconfirm, Typography, Badge, Tooltip,
 } from "antd";
-import { PlusOutlined, DownloadOutlined, CheckOutlined, CloseOutlined, SwapOutlined, SendOutlined } from "@ant-design/icons";
+import { PlusOutlined, DownloadOutlined, CheckOutlined, CloseOutlined, SwapOutlined, SendOutlined, DeleteOutlined } from "@ant-design/icons";
 import { useParams } from "next/navigation";
 import dayjs from "dayjs";
-import { useSession } from "next-auth/react";
 import { get, post, patch, del } from "@/lib/api-client";
 import { CHANGE_TYPES } from "@/lib/constants";
 import { StatusTag } from "@/components/common/Tags";
+import { useProject } from "../ProjectContext";
 
 interface Eco {
   id: string; ecoNumber: string; type: string; reason?: string | null; description?: string | null;
   versionFrom?: string | null; versionTo?: string | null; status: string; createdAt: string;
   ecr?: { id: string; ecrNumber: string; title: string } | null;
   impacts: { id: string; entityType: string; entityId: string; note?: string | null }[];
+  approvals: { id: string; action: string; comment?: string | null; createdAt: string }[];
   _count: { tasks: number; bomItems: number };
 }
 
@@ -24,8 +25,10 @@ interface Ecr {
   id: string; ecrNumber: string; title: string; type: string; reason?: string | null;
   status: string; createdAt: string;
   eco?: { id: string; ecoNumber: string } | null;
+  approvals: { id: string; action: string; comment?: string | null; createdAt: string }[];
 }
 
+type ImpactOption = { value: string; label: string };
 const TYPE_COLORS: Record<string, string> = { Hardware: "volcano", Mechanical: "geekblue", Firmware: "green", BOM: "orange" };
 
 const ECO_NEXT: Record<string, { to: string; label: string }[]> = {
@@ -38,13 +41,13 @@ const ECO_NEXT: Record<string, { to: string; label: string }[]> = {
 export default function ChangesPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { message, modal } = App.useApp();
-  const { data: session } = useSession();
-  const role = session?.user?.roleName ?? "";
-  const canApprove = ["admin", "pm"].includes(role);
-  const canCreate = ["admin", "pm", "engineer"].includes(role);
+  const { project } = useProject();
+  const permissions = project?.currentUserAccess.permissions ?? [];
+  const hasPermission = (permission: string) => permissions.includes(permission);
 
   const [ecos, setEcos] = useState<Eco[]>([]);
   const [ecrs, setEcrs] = useState<Ecr[]>([]);
+  const [impactCatalog, setImpactCatalog] = useState<Record<string, ImpactOption[]>>({});
   const [ecoFormOpen, setEcoFormOpen] = useState(false);
   const [ecrFormOpen, setEcrFormOpen] = useState(false);
   const [ecoForm] = Form.useForm();
@@ -53,6 +56,20 @@ export default function ChangesPage() {
   const load = useCallback(() => {
     get<Eco[]>(`/api/ecos?projectId=${projectId}`).then(setEcos).catch((e) => message.error(e.message));
     get<Ecr[]>(`/api/ecrs?projectId=${projectId}`).then(setEcrs).catch((e) => message.error(e.message));
+    Promise.all([
+      get<{ id: string; mpn: string; name: string }[]>(`/api/bom?projectId=${projectId}`),
+      get<{ id: string; title: string }[]>(`/api/tasks?projectId=${projectId}`),
+      get<{ id: string; metricName: string }[]>(`/api/specs?projectId=${projectId}`),
+      get<{ id: string; code: string; name: string }[]>("/api/plm/products"),
+    ]).then(([bomItems, tasks, specs, products]) => setImpactCatalog({
+      BOM_ITEM: bomItems.map((item) => ({ value: item.id, label: `${item.mpn} ${item.name}` })),
+      TASK: tasks.map((item) => ({ value: item.id, label: item.title })),
+      TECH_SPEC: specs.map((item) => ({ value: item.id, label: item.metricName })),
+      PRODUCT: products.map((item) => ({ value: item.id, label: `${item.code} ${item.name}` })),
+    })).catch((e) => {
+      setImpactCatalog({});
+      message.error(`影响对象加载失败：${e.message}`);
+    });
   }, [projectId, message]);
 
   useEffect(load, [load]);
@@ -117,7 +134,7 @@ export default function ChangesPage() {
       extra={
         <Space>
           <Button icon={<DownloadOutlined />} href={`/api/ecos/export-report?projectId=${projectId}`}>导出变更报告</Button>
-          {canCreate && <Button type="primary" icon={<PlusOutlined />} onClick={() => setEcoFormOpen(true)}>新建 ECO</Button>}
+          {hasPermission("eco:create") && <Button type="primary" icon={<PlusOutlined />} onClick={() => setEcoFormOpen(true)}>新建 ECO</Button>}
         </Space>
       }
     >
@@ -154,10 +171,22 @@ export default function ChangesPage() {
                     ))}
                   </Space>
                 )}
+                {eco.approvals.length > 0 && (
+                  <Space wrap size={4}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>审批历史：</Typography.Text>
+                    {eco.approvals.map((approval) => (
+                      <Tooltip key={approval.id} title={`${dayjs(approval.createdAt).format("YYYY-MM-DD HH:mm")} ${approval.comment ?? ""}`}>
+                        <Tag color="blue">{approval.action}</Tag>
+                      </Tooltip>
+                    ))}
+                  </Space>
+                )}
                 <Space wrap>
                   {(ECO_NEXT[eco.status] ?? []).map((n) => {
-                    const needApprove = ["APPROVED", "DRAFT"].includes(n.to) && eco.status === "PENDING";
-                    if (needApprove && !canApprove) return null;
+                    const requiredPermission = n.to === "PENDING" ? "eco:update"
+                      : ["APPROVED", "DRAFT"].includes(n.to) ? "eco:approve"
+                        : "eco:implement";
+                    if (!hasPermission(requiredPermission)) return null;
                     return (
                       <Button key={n.to} size="small"
                         type={n.to === "APPROVED" || n.to === "IMPLEMENTED" ? "primary" : "default"}
@@ -167,7 +196,7 @@ export default function ChangesPage() {
                       </Button>
                     );
                   })}
-                  {eco.status === "DRAFT" && canCreate && (
+                  {eco.status === "DRAFT" && hasPermission("eco:update") && (
                     <Popconfirm title="删除该草稿 ECO？" onConfirm={async () => { await del(`/api/ecos/${eco.id}`); load(); }}>
                       <Button size="small" danger type="text">删除</Button>
                     </Popconfirm>
@@ -186,7 +215,7 @@ export default function ChangesPage() {
     <Card
       size="small"
       title="变更申请（ECR）"
-      extra={canCreate && <Button type="primary" icon={<PlusOutlined />} onClick={() => setEcrFormOpen(true)}>新建 ECR</Button>}
+      extra={hasPermission("ecr:create") && <Button type="primary" icon={<PlusOutlined />} onClick={() => setEcrFormOpen(true)}>新建 ECR</Button>}
     >
       <Table
         rowKey="id"
@@ -199,6 +228,7 @@ export default function ChangesPage() {
           { title: "类型", dataIndex: "type", width: 110, render: (v: string) => <Tag color={TYPE_COLORS[v]}>{v}</Tag> },
           { title: "起因", dataIndex: "reason", ellipsis: true, render: (v) => v ?? "—" },
           { title: "状态", dataIndex: "status", width: 110, render: (v) => <StatusTag value={v} /> },
+          { title: "审批记录", width: 100, render: (_, r) => <Tag>{r.approvals.length}</Tag> },
           { title: "申请时间", dataIndex: "createdAt", width: 110, render: (v) => dayjs(v).format("YYYY-MM-DD") },
           {
             title: "关联 ECO", width: 130,
@@ -208,16 +238,16 @@ export default function ChangesPage() {
             title: "操作", width: 220,
             render: (_, r) => (
               <Space size={4} wrap>
-                {r.status === "DRAFT" && (
+                {r.status === "DRAFT" && hasPermission("ecr:submit") && (
                   <Button size="small" icon={<SendOutlined />} onClick={() => ecrAction(r, "submit", "提交")}>提交</Button>
                 )}
-                {r.status === "SUBMITTED" && canApprove && (
+                {r.status === "SUBMITTED" && hasPermission("ecr:approve") && (
                   <>
                     <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => ecrAction(r, "approve", "批准")}>批准</Button>
                     <Button size="small" danger icon={<CloseOutlined />} onClick={() => ecrAction(r, "reject", "驳回")}>驳回</Button>
                   </>
                 )}
-                {r.status === "APPROVED" && canCreate && (
+                {r.status === "APPROVED" && hasPermission("eco:create") && (
                   <Button size="small" type="primary" icon={<SwapOutlined />} onClick={() => ecrAction(r, "convert", "转 ECO")}>转 ECO</Button>
                 )}
               </Space>
@@ -243,6 +273,48 @@ export default function ChangesPage() {
             <Form.Item name="versionFrom" label="变更前版本"><Input placeholder="PCB V1.0" /></Form.Item>
             <Form.Item name="versionTo" label="变更后版本"><Input placeholder="PCB V1.1" /></Form.Item>
           </Space>
+          <Form.List name="impacts">
+            {(fields, { add, remove }) => (
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                  <Typography.Text strong>影响范围</Typography.Text>
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => add({ entityType: "BOM_ITEM" })}>添加影响项</Button>
+                </Space>
+                {fields.map((field) => (
+                  <Space key={field.key} align="baseline" wrap>
+                    <Form.Item {...field} name={[field.name, "entityType"]} rules={[{ required: true }]}>
+                      <Select
+                        style={{ width: 120 }}
+                        options={["BOM_ITEM", "TASK", "TECH_SPEC", "PRODUCT"].map((value) => ({ value, label: value }))}
+                        onChange={() => ecoForm.setFieldValue(["impacts", field.name, "entityId"], undefined)}
+                      />
+                    </Form.Item>
+                    <Form.Item noStyle shouldUpdate={(previous, current) => (
+                      previous.impacts?.[field.name]?.entityType !== current.impacts?.[field.name]?.entityType
+                    )}>
+                      {({ getFieldValue }) => {
+                        const entityType = getFieldValue(["impacts", field.name, "entityType"]);
+                        return (
+                          <Form.Item {...field} name={[field.name, "entityId"]} rules={[{ required: true, message: "请选择影响对象" }]}>
+                            <Select
+                              showSearch
+                              optionFilterProp="label"
+                              placeholder="选择当前项目实体"
+                              style={{ width: 220 }}
+                              options={impactCatalog[entityType] ?? []}
+                              notFoundContent="暂无可选对象"
+                            />
+                          </Form.Item>
+                        );
+                      }}
+                    </Form.Item>
+                    <Form.Item {...field} name={[field.name, "note"]}><Input placeholder="影响说明" style={{ width: 150 }} /></Form.Item>
+                    <Button type="text" danger icon={<DeleteOutlined />} onClick={() => remove(field.name)} />
+                  </Space>
+                ))}
+              </Space>
+            )}
+          </Form.List>
         </Form>
       </Modal>
 

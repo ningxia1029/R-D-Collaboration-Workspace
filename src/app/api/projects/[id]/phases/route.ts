@@ -1,13 +1,14 @@
 import { requirePerm, apiError } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, { params }: Ctx) {
   try {
-    await requirePerm("project:read", params.id);
+    const { id } = await params;
+    await requirePerm("project:read", id);
     return Response.json(
-      await prisma.phase.findMany({ where: { projectId: params.id }, orderBy: { sortOrder: "asc" } })
+      await prisma.phase.findMany({ where: { projectId: id }, orderBy: { sortOrder: "asc" } })
     );
   } catch (e) {
     return apiError(e);
@@ -16,11 +17,12 @@ export async function GET(_req: Request, { params }: Ctx) {
 
 export async function POST(req: Request, { params }: Ctx) {
   try {
-    await requirePerm("project:update", params.id);
+    const { id } = await params;
+    await requirePerm("project:update", id);
     const data = await req.json();
     const phase = await prisma.phase.create({
       data: {
-        projectId: params.id,
+        projectId: id,
         phaseName: data.phaseName,
         targetDate: data.targetDate ? new Date(data.targetDate) : null,
         sortOrder: data.sortOrder ?? 0,
@@ -35,7 +37,8 @@ export async function POST(req: Request, { params }: Ctx) {
 
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
-    await requirePerm("project:update", params.id);
+    const { id } = await params;
+    await requirePerm("project:update", id);
     const data = await req.json();
     const phase = await prisma.phase.update({
       where: { id: data.id },

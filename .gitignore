@@ -5,6 +5,7 @@ node_modules/
 *.db-wal
 *.db-shm
 .env.local
+.env.agent
 .DS_Store
 .env
 builtin-env.json
@@ -15,3 +16,5 @@ dist/
 .next-*/
 .npm-cache*/
 .workbuddy/
+.playwright-cli/
+output/

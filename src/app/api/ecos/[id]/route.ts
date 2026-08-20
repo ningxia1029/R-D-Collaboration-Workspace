@@ -2,7 +2,7 @@ import { requirePerm, apiError, ApiError } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { updateEco, deleteEco, transitionEco } from "@/lib/services/changeService";
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 async function projectOf(id: string) {
   const eco = await prisma.changeLog.findUnique({ where: { id }, select: { projectId: true } });
@@ -12,7 +12,8 @@ async function projectOf(id: string) {
 
 export async function PATCH(req: Request, { params }: Ctx) {
   try {
-    const projectId = await projectOf(params.id);
+    const { id } = await params;
+    const projectId = await projectOf(id);
     const body = await req.json();
     // 状态流转：{ transition: "PENDING" | "APPROVED" | "IMPLEMENTED" | "CLOSED" | "DRAFT" }
     if (body.transition) {
@@ -24,10 +25,10 @@ export async function PATCH(req: Request, { params }: Ctx) {
         CLOSED: "eco:implement",
       };
       const user = await requirePerm(permMap[body.transition] ?? "eco:update", projectId);
-      return Response.json(await transitionEco(user.id, params.id, body.transition, body.comment));
+      return Response.json(await transitionEco(user.id, id, body.transition, body.comment));
     }
     const user = await requirePerm("eco:update", projectId);
-    return Response.json(await updateEco(user.id, params.id, body));
+    return Response.json(await updateEco(user.id, id, body));
   } catch (e) {
     return apiError(e);
   }
@@ -35,9 +36,10 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
 export async function DELETE(_req: Request, { params }: Ctx) {
   try {
-    const projectId = await projectOf(params.id);
+    const { id } = await params;
+    const projectId = await projectOf(id);
     const user = await requirePerm("eco:update", projectId);
-    return Response.json(await deleteEco(user.id, params.id));
+    return Response.json(await deleteEco(user.id, id));
   } catch (e) {
     return apiError(e);
   }

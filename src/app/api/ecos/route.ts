@@ -8,8 +8,7 @@ export async function GET(req: Request) {
     const projectId = url.searchParams.get("projectId");
     if (!projectId) return Response.json({ error: "projectId 必填" }, { status: 400 });
     await requirePerm("eco:read", projectId);
-    return Response.json(
-      await prisma.changeLog.findMany({
+    const ecos = await prisma.changeLog.findMany({
         where: { projectId },
         include: {
           ecr: { select: { id: true, ecrNumber: true, title: true } },
@@ -17,8 +16,12 @@ export async function GET(req: Request) {
           _count: { select: { tasks: true, bomItems: true } },
         },
         orderBy: { createdAt: "desc" },
-      })
-    );
+      });
+    const approvals = await prisma.approvalRecord.findMany({
+      where: { targetType: "ECO", targetId: { in: ecos.map((eco) => eco.id) } },
+      orderBy: { createdAt: "asc" },
+    });
+    return Response.json(ecos.map((eco) => ({ ...eco, approvals: approvals.filter((item) => item.targetId === eco.id) })));
   } catch (e) {
     return apiError(e);
   }

@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Tabs, Tag, Typography, Space, Spin, Button, Modal, Input, App, Dropdown } from "antd";
-import { SwapOutlined } from "@ant-design/icons";
+import { RobotOutlined, SwapOutlined } from "@ant-design/icons";
 import { usePathname, useRouter, useParams } from "next/navigation";
 import { get, post } from "@/lib/api-client";
 import { StatusTag } from "@/components/common/Tags";
 import { LIFECYCLE_LABELS, LIFECYCLE_STAGES, type LifecycleStage } from "@/lib/constants";
-import { useSession } from "next-auth/react";
 import { ProjectCtx, type ProjectDetail } from "./ProjectContext";
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
@@ -20,8 +19,7 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   const pathname = usePathname();
   const router = useRouter();
   const { message, modal } = App.useApp();
-  const { data: session } = useSession();
-  const canManage = ["admin", "pm"].includes(session?.user?.roleName ?? "");
+  const canManage = project?.currentUserAccess.permissions.includes("project:update") ?? false;
 
   const load = () => {
     get<ProjectDetail>(`/api/projects/${projectId}`)
@@ -69,6 +67,13 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
           <StatusTag value={project.status} />
           <Tag color="geekblue">{LIFECYCLE_LABELS[project.lifecycleStage as LifecycleStage]}</Tag>
           {project.product && <Tag>产品：{project.product.name}</Tag>}
+          <Button
+            size="small"
+            icon={<RobotOutlined />}
+            onClick={() => router.push(`/agent?projectId=${encodeURIComponent(projectId)}`)}
+          >
+            问智能体
+          </Button>
           {canManage && (nextStage || prevStage) && (
             <Dropdown
               menu={{

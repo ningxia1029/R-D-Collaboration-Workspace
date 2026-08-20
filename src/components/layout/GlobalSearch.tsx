@@ -22,6 +22,19 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   DOCUMENT: { label: "文档", color: "green" },
 };
 
+/** 仅识别搜索服务生成的 <b> 标记；文本仍由 React 转义，禁止注入任意 HTML。 */
+function renderSnippet(snippet: string) {
+  return snippet.split(/(<\/?b>)/i).reduce<{ bold: boolean; nodes: React.ReactNode[] }>(
+    (state, part, index) => {
+      if (/^<b>$/i.test(part)) return { ...state, bold: true };
+      if (/^<\/b>$/i.test(part)) return { ...state, bold: false };
+      if (part) state.nodes.push(state.bold ? <strong key={index}>{part}</strong> : part);
+      return state;
+    },
+    { bold: false, nodes: [] }
+  ).nodes;
+}
+
 export default function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -121,7 +134,7 @@ export default function GlobalSearch() {
                         {hit.title}
                       </>
                     }
-                    description={<span dangerouslySetInnerHTML={{ __html: hit.snippet ?? "" }} />}
+                    description={<span>{renderSnippet(hit.snippet ?? "")}</span>}
                   />
                 </List.Item>
               )}

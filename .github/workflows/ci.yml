@@ -1,0 +1,214 @@
+name: Agent Quality Gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/workbuddy_ci_not_used
+      AUTH_SECRET: ci-only-agent-quality-secret-at-least-32-bytes
+      AUTH_TRUST_HOST: "true"
+      AGENT_INTERNAL_SERVICE_SECRET: ci-only-agent-quality-secret-at-least-32-bytes
+      AGENT_DELEGATION_SECRET: ci-only-agent-quality-secret-at-least-32-bytes
+      AGENT_CURSOR_SECRET: ci-only-agent-quality-secret-at-least-32-bytes
+      AGENT_ACTION_APPROVAL_SECRET: ci-only-agent-quality-secret-at-least-32-bytes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npx prisma validate
+      - run: npm run typecheck -- --incremental false
+      - run: npm test
+      - run: npm run agent:eval
+      - run: npm run agent:benchmark
+      - run: npm run build
+      - run: npm run standalone:prepare
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Validate standalone artifact boundary
+        shell: bash
+        run: |
+          test -f .next/standalone/server.js
+          test -d .next/standalone/.next/static
+          if find .next/standalone -type f \( -name '.env' -o -name '.env.*' \) | grep -q .; then
+            echo "standalone artifact contains environment files" >&2
+            exit 1
+          fi
+          tar -C .next/standalone -czf /tmp/workbuddy-standalone.tgz .
+          sha256sum /tmp/workbuddy-standalone.tgz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-quality-evidence
+          path: |
+            output/agent-eval/enterprise-agent-eval-v1.json
+            output/playwright/phase8-results.json
+          if-no-files-found: error
+          retention-days: 30
+
+  migration-and-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workbuddy_phase8_ci_source
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d workbuddy_phase8_ci_source"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/workbuddy_phase8_ci_source
+      AGENT_INDEX_TARGET_ACK: workbuddy_phase8_ci_source
+      AGENT_DB_VERIFY_TARGET_ACK: workbuddy_phase8_ci_source
+      AGENT_DB_VERIFY_ALLOW_DESTRUCTIVE: "1"
+      AGENT_RELEASE_VERIFY_TARGET_ACK: workbuddy_phase8_ci_source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm run db:agent-indexes
+      - run: npm run db:agent-verify
+      - run: npx prisma migrate deploy
+      - name: Assert zero schema drift
+        run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - name: Seed deterministic restore fixture
+        run: npm run db:agent-restore-verify -- seed
+      - name: Backup, checksum, restore and compare
+        shell: bash
+        run: |
+          pg_dump --format=custom --no-owner --no-acl --file=/tmp/workbuddy-phase8.dump "$DATABASE_URL"
+          sha256sum /tmp/workbuddy-phase8.dump | tee /tmp/workbuddy-phase8.dump.sha256
+          psql postgresql://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE workbuddy_phase8_ci_restore'
+          pg_restore --no-owner --no-acl --exit-on-error --single-transaction --dbname=postgresql://postgres:postgres@127.0.0.1:5432/workbuddy_phase8_ci_restore /tmp/workbuddy-phase8.dump
+          AGENT_RESTORE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/workbuddy_phase8_ci_restore \
+            AGENT_RELEASE_VERIFY_TARGET_ACK='workbuddy_phase8_ci_source->workbuddy_phase8_ci_restore' \
+            npm run db:agent-restore-verify -- compare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-16-restore-evidence
+          path: /tmp/workbuddy-phase8.dump.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  workbench-rbac-uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workbuddy_workbench_uat_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d workbuddy_workbench_uat_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # 固定 PostgreSQL service 库；此 job 禁止接收或复用任何生产 DATABASE_URL。
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/workbuddy_workbench_uat_ci
+      E2E_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/workbuddy_workbench_uat_ci
+      WORKBENCH_RBAC_E2E: "1"
+      DEMO_SEED_ALLOW: "1"
+      DEMO_SEED_TARGET_ACK: workbuddy_workbench_uat_ci
+      NEXT_PUBLIC_DEMO_MODE: "true"
+      AUTH_SECRET: ci-only-workbench-rbac-secret-at-least-32-bytes
+      AUTH_TRUST_HOST: "true"
+      AGENT_INTERNAL_SERVICE_SECRET: ci-only-workbench-rbac-secret-at-least-32-bytes
+      AGENT_DELEGATION_SECRET: ci-only-workbench-rbac-secret-at-least-32-bytes
+      AGENT_CURSOR_SECRET: ci-only-workbench-rbac-secret-at-least-32-bytes
+      AGENT_ACTION_APPROVAL_SECRET: ci-only-workbench-rbac-secret-at-least-32-bytes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+      - name: Generate isolated demo password
+        shell: bash
+        run: |
+          DEMO_PASSWORD="Aa1!$(openssl rand -hex 24)"
+          echo "::add-mask::$DEMO_PASSWORD"
+          echo "DEMO_SEED_PASSWORD=$DEMO_PASSWORD" >> "$GITHUB_ENV"
+          echo "NEXT_PUBLIC_DEMO_PASSWORD=$DEMO_PASSWORD" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      # 仅上述固定 service 库允许 demo seed；不得在其他 job/URL 上调用。
+      - run: npm run db:seed
+      - run: npm run build
+      - run: npm run standalone:prepare
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/e2e/workbench-rbac.spec.ts --project=chromium-desktop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workbench-rbac-uat-evidence
+          path: |
+            output/playwright/phase8-results.json
+            output/playwright/test-results
+          if-no-files-found: warn
+          retention-days: 30
+
+  desktop-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/workbuddy_ci_not_used
+      AUTH_SECRET: ci-only-desktop-secret-at-least-32-bytes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: npm
+      - run: npm ci
+      - run: npx install-electron --no
+      - run: npm test
+      - run: npm run build:desktop
+      - name: Assert unsigned smoke provenance and checksums
+        shell: pwsh
+        run: |
+          $provenance = Get-Content -LiteralPath dist/BUILD-PROVENANCE.json -Encoding UTF8 | ConvertFrom-Json
+          if ($provenance.codeSigned -ne $false) { throw "PR smoke artifact must remain unsigned" }
+          Get-Content -LiteralPath dist/SHA256SUMS.txt -Encoding UTF8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-unsigned-smoke
+          path: |
+            dist/PLM-Workspace-v*-portable.exe
+            dist/PLM-Workspace-v*-green.zip
+            dist/SHA256SUMS.txt
+            dist/BUILD-PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 7
