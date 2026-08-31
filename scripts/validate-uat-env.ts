@@ -1,3 +1,5 @@
+export {};
+
 const postgresPassword = process.env.UAT_POSTGRES_PASSWORD ?? "";
 const authSecret = process.env.UAT_AUTH_SECRET ?? "";
 
