@@ -135,6 +135,7 @@ function Set-PrivateBackupAcl {
 }
 
 $backupItems = @(
+  Get-Item -LiteralPath $envPath -Force
   Get-Item -LiteralPath $backupDirectory -Force
   Get-ChildItem -LiteralPath $backupDirectory -Force -Recurse
 )

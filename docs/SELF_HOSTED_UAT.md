@@ -16,6 +16,13 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 config --q
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 up --detach --build db migrate app
 ```
 
+从早期 `.env.selfhost` 升级时禁止使用 `-Force`，否则会轮换数据库密码和 `AUTH_SECRET`。使用无损升级模式保留所有既有 Secret、Tunnel token 和模型 Key，只补齐缺失的 Agent Secret 与默认模型配置：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/new-selfhost-env.ps1 -Upgrade
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile agent config --quiet
+```
+
 `migrate` 会先于应用完成 Prisma migration。一次性演示数据仅可显式执行 `demo-seed` profile，且 seed 会清表；只允许对空的隔离 UAT 数据库操作，绝不能在已有业务数据或其他环境执行：
 
 ```powershell
@@ -23,6 +30,24 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile 
 ```
 
 本机 live 与 ready 检查分别为 `http://127.0.0.1:3010/api/health/live` 和 `http://127.0.0.1:3010/api/health/ready`。
+
+## Agent Worker 与模型 API
+
+`agent-worker` 是可选的 `agent` profile，只加入 frontend 网络，通过 `http://app:3000` 调用 WorkBuddy 内部控制面并直接访问模型 HTTPS API；它不连接数据库，也不接收 `DATABASE_URL`。Web/API 与 Worker 共享的四个 Agent Secret 由 `new-selfhost-env.ps1` 独立随机生成。
+
+模型 Key 只写入受 Windows ACL 保护且被 Git 忽略的 `.env.selfhost`：
+
+```text
+AGENT_MODEL_API_KEY=<新创建的正式 Key>
+```
+
+不要把 Key 写入 Compose、源码、提交、日志或聊天记录；曾经通过聊天、截图或日志发送的 Key 必须先在模型平台撤销并重新创建。默认模型配置为 DeepSeek `https://api.deepseek.com`、`deepseek-v4-flash`、非思考模式。Key 配置完成后启动 Worker：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile agent up --detach agent-worker
+```
+
+Worker 启动不等于 Agent 已对用户开放；管理员仍需在 Agent 管理页显式开启总开关和允许的只读 Tool。模型不可用时只影响 Agent Run，不应影响项目、任务、BOM 等主业务。
 
 ## Cloudflare Access 与 Tunnel
 
@@ -95,10 +120,11 @@ powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 exec app n
 powershell -ExecutionPolicy Bypass -File scripts/selfhost-compose.ps1 --profile tunnel up --detach tunnel
 ```
 
-`scripts/selfhost-compose.ps1` 每次运行都会将 `backups/selfhost` 的 ACL 收紧到当前 Windows SID、SYSTEM 和 Builtin Administrators；该操作不递归修改其他目录。可在本机检查 ACL：
+`scripts/selfhost-compose.ps1` 每次运行都会将 `.env.selfhost` 和 `backups/selfhost` 的 ACL 收紧到当前 Windows SID、SYSTEM 和 Builtin Administrators；该操作不递归修改其他目录。可在本机检查 ACL：
 
 ```powershell
 icacls.exe .\backups\selfhost
+icacls.exe .\.env.selfhost
 ```
 
 应用回滚与数据库恢复是两件独立的操作：先保留当前数据库卷和可验证备份，再按应用版本回滚；只有明确需要回退数据时才执行上述恢复命令。

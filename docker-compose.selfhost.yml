@@ -23,9 +23,19 @@ services:
     environment:
       SELFHOST_POSTGRES_PASSWORD: ${SELFHOST_POSTGRES_PASSWORD:?请设置 SELFHOST_POSTGRES_PASSWORD}
       SELFHOST_AUTH_SECRET: ${SELFHOST_AUTH_SECRET:?请设置至少 32 位的 SELFHOST_AUTH_SECRET}
+      SELFHOST_AGENT_INTERNAL_SERVICE_SECRET: ${SELFHOST_AGENT_INTERNAL_SERVICE_SECRET:?请设置独立的 Agent 内部服务密钥}
+      SELFHOST_AGENT_DELEGATION_SECRET: ${SELFHOST_AGENT_DELEGATION_SECRET:?请设置独立的 Agent 委托密钥}
+      SELFHOST_AGENT_CURSOR_SECRET: ${SELFHOST_AGENT_CURSOR_SECRET:?请设置独立的 Agent 游标密钥}
+      SELFHOST_AGENT_ACTION_APPROVAL_SECRET: ${SELFHOST_AGENT_ACTION_APPROVAL_SECRET:?请设置独立的 Agent 动作审批密钥}
       SELFHOST_BACKUP_INTERVAL_SECONDS: ${SELFHOST_BACKUP_INTERVAL_SECONDS:-86400}
       SELFHOST_BACKUP_RETENTION_DAYS: ${SELFHOST_BACKUP_RETENTION_DAYS:-7}
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
+      AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-https://api.deepseek.com}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
+      AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-deepseek-v4-flash}
+      AGENT_MODEL_THINKING: ${AGENT_MODEL_THINKING:-disabled}
+      AGENT_MODEL_MAX_OUTPUT_TOKENS: ${AGENT_MODEL_MAX_OUTPUT_TOKENS:-2048}
       SELFHOST_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-workbuddy-selfhost}
     command: ["npx", "tsx", "scripts/validate-selfhost-env.ts"]
     restart: "no"
@@ -108,6 +118,10 @@ services:
       NEXT_PUBLIC_DEMO_MODE: "false"
       DEPLOYMENT_ENV: uat
       AUTH_RATE_LIMIT_MODE: isolated-uat
+      AGENT_INTERNAL_SERVICE_SECRET: ${SELFHOST_AGENT_INTERNAL_SERVICE_SECRET:?请设置独立的 Agent 内部服务密钥}
+      AGENT_DELEGATION_SECRET: ${SELFHOST_AGENT_DELEGATION_SECRET:?请设置独立的 Agent 委托密钥}
+      AGENT_CURSOR_SECRET: ${SELFHOST_AGENT_CURSOR_SECRET:?请设置独立的 Agent 游标密钥}
+      AGENT_ACTION_APPROVAL_SECRET: ${SELFHOST_AGENT_ACTION_APPROVAL_SECRET:?请设置独立的 Agent 动作审批密钥}
     depends_on:
       preflight:
         condition: service_completed_successfully
@@ -125,6 +139,30 @@ services:
       retries: 3
     restart: unless-stopped
     networks: [frontend, backend]
+    logging: *bounded-logging
+    <<: *restricted-security
+
+  agent-worker:
+    profiles: ["agent"]
+    build:
+      context: .
+      target: uat-tools
+    user: "1001:1001"
+    environment:
+      AGENT_RUNTIME_BASE_URL: http://app:3000
+      AGENT_INTERNAL_SERVICE_SECRET: ${SELFHOST_AGENT_INTERNAL_SERVICE_SECRET:?请设置独立的 Agent 内部服务密钥}
+      AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
+      AGENT_MODEL_BASE_URL: ${AGENT_MODEL_BASE_URL:-https://api.deepseek.com}
+      AGENT_MODEL_API_KEY: ${AGENT_MODEL_API_KEY:-}
+      AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-deepseek-v4-flash}
+      AGENT_MODEL_THINKING: ${AGENT_MODEL_THINKING:-disabled}
+      AGENT_MODEL_MAX_OUTPUT_TOKENS: ${AGENT_MODEL_MAX_OUTPUT_TOKENS:-2048}
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "agent-worker/src/cli.ts"]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [frontend]
     logging: *bounded-logging
     <<: *restricted-security
 
