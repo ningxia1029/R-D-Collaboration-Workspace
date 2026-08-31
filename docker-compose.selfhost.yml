@@ -35,6 +35,7 @@ services:
 
   db:
     image: postgres:16
+    user: "999:999"
     environment:
       POSTGRES_DB: workbuddy_selfhost_uat
       POSTGRES_USER: workbuddy_selfhost
@@ -52,15 +53,11 @@ services:
     restart: unless-stopped
     networks: [backend]
     logging: *bounded-logging
-    # 官方入口需在首次挂载命名卷时 chown，并降权为 postgres；仅保留这三个启动能力。
+    # 直接使用镜像内 postgres 用户，避免 root 入口在重启时需要额外文件能力。
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
 
   migrate:
     build:

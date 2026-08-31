@@ -103,6 +103,8 @@ test("本机自托管 UAT 栈隔离数据库、秘密与可选隧道", () => {
 
   assert.match(db, /image: postgres:16/);
   assert.match(db, /POSTGRES_DB: workbuddy_selfhost_uat/);
+  assert.match(db, /user: "999:999"/, "PostgreSQL 必须直接以镜像内 postgres 用户运行，避免 root 权限修复路径");
+  assert.doesNotMatch(db, /cap_add:/, "PostgreSQL 不得通过附加文件能力绕过既有 PGDATA 权限");
   assert.doesNotMatch(db, /^    ports:/m);
   assert.match(db, /depends_on:\n      preflight:\n        condition: service_completed_successfully/);
   assert.match(app, /127\.0\.0\.1:\$\{SELFHOST_APP_PORT:-3010\}:3000/);
